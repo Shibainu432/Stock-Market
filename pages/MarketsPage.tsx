@@ -1,8 +1,10 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { Stock, StockListData } from '../types';
 import StockMarketTable from '../components/StockMarketTable';
+import MarketHeatmap from '../components/MarketHeatmap';
 
 type MarketListType = 'active' | 'trending' | 'gainers' | 'losers' | '52w_high' | '52w_low';
+type ViewMode = 'table' | 'heatmap';
 
 const MarketTab: React.FC<{ label: string; active: boolean; onClick: () => void }> = ({ label, active, onClick }) => (
     <button
@@ -17,12 +19,30 @@ const MarketTab: React.FC<{ label: string; active: boolean; onClick: () => void 
     </button>
 );
 
+const ViewModeToggle: React.FC<{ viewMode: ViewMode; setViewMode: (mode: ViewMode) => void }> = ({ viewMode, setViewMode }) => (
+    <div className="flex items-center bg-gray-900 rounded-md p-0.5">
+        <button 
+            onClick={() => setViewMode('table')}
+            className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${viewMode === 'table' ? 'bg-accent text-white' : 'text-gray-400 hover:bg-gray-700'}`}
+        >
+            Table
+        </button>
+        <button
+            onClick={() => setViewMode('heatmap')}
+            className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${viewMode === 'heatmap' ? 'bg-accent text-white' : 'text-gray-400 hover:bg-gray-700'}`}
+        >
+            Heatmap
+        </button>
+    </div>
+);
+
 const MarketsPage: React.FC<{
     stocks: Stock[];
     onSelectStock: (symbol: string) => void;
     searchQuery: string;
 }> = ({ stocks, onSelectStock, searchQuery }) => {
     const [activeTab, setActiveTab] = useState<MarketListType>('active');
+    const [viewMode, setViewMode] = useState<ViewMode>('table');
     const [sortConfig, setSortConfig] = useState<{ key: keyof StockListData; direction: 'asc' | 'desc' } | null>({ key: 'marketCap', direction: 'desc'});
     
     const handleSort = useCallback((key: keyof StockListData) => {
@@ -41,7 +61,7 @@ const MarketsPage: React.FC<{
             if (!current || !prev) return null;
 
             const change = current.close - prev.close;
-            const changePercent = (change) / prev.close;
+            const changePercent = prev.close > 0 ? (change) / prev.close : 0;
             
             const history52w = history.slice(-252);
             const high52w = Math.max(...history52w.map(h => h.high));
@@ -49,11 +69,11 @@ const MarketsPage: React.FC<{
 
             const history5d = history.slice(-5);
             const prices5d = history5d.map(h => h.close);
-            const avgPrice5d = prices5d.reduce((a, b) => a + b, 0) / prices5d.length;
-            const volatility5d = Math.sqrt(prices5d.map(p => Math.pow(p - avgPrice5d, 2)).reduce((a,b)=>a+b,0) / prices5d.length) / avgPrice5d;
+            const avgPrice5d = prices5d.length > 0 ? prices5d.reduce((a, b) => a + b, 0) / prices5d.length : 0;
+            const volatility5d = prices5d.length > 0 && avgPrice5d > 0 ? Math.sqrt(prices5d.map(p => Math.pow(p - avgPrice5d, 2)).reduce((a,b)=>a+b,0) / prices5d.length) / avgPrice5d : 0;
             
             const volumes5d = history5d.map(h => h.volume);
-            const avgVolume5d = volumes5d.reduce((a, b) => a + b, 0) / volumes5d.length;
+            const avgVolume5d = volumes5d.length > 0 ? volumes5d.reduce((a, b) => a + b, 0) / volumes5d.length : 0;
             const volumeSpike = avgVolume5d > 0 ? current.volume / avgVolume5d : 1;
 
             const trendingScore = volatility5d * volumeSpike;
@@ -77,7 +97,7 @@ const MarketsPage: React.FC<{
             trending: [...stocksWithMetrics].sort((a, b) => b.trendingScore - a.trendingScore),
             gainers: [...stocksWithMetrics].sort((a, b) => b.changePercent - a.changePercent).slice(0, 50),
             losers: [...stocksWithMetrics].sort((a, b) => a.changePercent - b.changePercent).slice(0, 50),
-            '52w_high': [...stocksWithMetrics].sort((a, b) => (b.price / b.high52w) - (a.price / a.high52w)),
+            '52w_high': [...stocksWithMetrics].sort((a, b) => (b.price / b.high52w) - (a.price / a.low52w)),
             '52w_low': [...stocksWithMetrics].sort((a, b) => (a.price / a.low52w) - (b.price / b.low52w)),
         };
 
@@ -95,7 +115,7 @@ const MarketsPage: React.FC<{
             );
         }
 
-        if (sortConfig !== null) {
+        if (viewMode === 'table' && sortConfig !== null) {
             data.sort((a, b) => {
                 if (a[sortConfig.key] < b[sortConfig.key]) {
                     return sortConfig.direction === 'asc' ? -1 : 1;
@@ -105,10 +125,12 @@ const MarketsPage: React.FC<{
                 }
                 return 0;
             });
+        } else if (viewMode === 'heatmap') {
+            data.sort((a,b) => b.marketCap - a.marketCap);
         }
 
         return data;
-    }, [marketData, activeTab, searchQuery, sortConfig]);
+    }, [marketData, activeTab, searchQuery, sortConfig, viewMode]);
 
     const TABS: { key: MarketListType; label: string }[] = [
         { key: 'active', label: 'Most Active' },
@@ -128,7 +150,7 @@ const MarketsPage: React.FC<{
                 <p className="text-gray-400">Explore market data from different perspectives.</p>
             </div>
 
-            <div className="border-b border-gray-700 mb-4">
+            <div className="border-b border-gray-700 mb-4 flex justify-between items-center">
                 <nav className="-mb-px flex space-x-2" aria-label="Tabs">
                     {TABS.map(tab => (
                         <MarketTab
@@ -137,21 +159,28 @@ const MarketsPage: React.FC<{
                             active={activeTab === tab.key}
                             onClick={() => {
                                 setActiveTab(tab.key);
-                                // Reset sort when changing tabs for clarity
-                                setSortConfig(null);
+                                setSortConfig(viewMode === 'table' ? { key: 'marketCap', direction: 'desc'} : null);
                             }}
                         />
                     ))}
                 </nav>
+                 <ViewModeToggle viewMode={viewMode} setViewMode={setViewMode} />
             </div>
             
              <div className="bg-gray-800 rounded-md border border-gray-700">
-                <StockMarketTable
-                    stocks={sortedAndFilteredData}
-                    onSelectStock={onSelectStock}
-                    sortConfig={sortConfig}
-                    onSort={handleSort}
-                />
+                {viewMode === 'table' ? (
+                    <StockMarketTable
+                        stocks={sortedAndFilteredData}
+                        onSelectStock={onSelectStock}
+                        sortConfig={sortConfig}
+                        onSort={handleSort}
+                    />
+                ) : (
+                    <MarketHeatmap
+                        stocks={sortedAndFilteredData}
+                        onSelectStock={onSelectStock}
+                    />
+                )}
              </div>
         </div>
     );
