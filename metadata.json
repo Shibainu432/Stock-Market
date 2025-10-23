@@ -1,0 +1,5 @@
+{
+  "name": "10/23/2025 8:57 AM Real NeuralNet Stock Market Simulator",
+  "description": "A simulation of a stock market with 20 stocks and 10 AI investors. Features an accurate Washington State tax model, including a 7% long-term capital gains tax with an annual exemption, and a sector-specific Business & Occupation (B&O) tax that acts as a drag on corporate growth. Watch AIs trade and manage their portfolios in real-time.",
+  "requestFramePermissions": []
+}
