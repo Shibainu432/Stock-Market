@@ -1,5 +1,6 @@
 import React from 'react';
 import { NeuralNetwork } from './services/neuralNetwork';
+import { TokenType } from './services/newsGenerationService';
 
 // A simple data point for charts that only need a single value over time (e.g., market index, portfolio value).
 export interface SimplePriceDataPoint {
@@ -25,10 +26,13 @@ export interface CorporateAI {
     learningRate: number;
 }
 
+export type Region = 'North America' | 'Europe' | 'Asia';
+
 export interface Stock {
   symbol: string;
   name: string;
   sector: string;
+  region: Region;
   history: OHLCDataPoint[];
   corporateAI: CorporateAI;
   isDelisted?: boolean;
@@ -94,67 +98,87 @@ export interface RecentTrade {
     outcomeEvaluationDay: number;
 }
 
+export interface ActiveEvent {
+    id: string;
+    day: number;
+    stockSymbol: string | null;
+    stockName: string | null;
+    eventName: string;
+    description: string;
+    type: 'positive' | 'negative' | 'neutral' | 'split' | 'merger' | 'alliance' | 'political' | 'disaster';
+    impact?: number | Record<string, number>;
+    splitDetails?: { symbol: string, ratio: number };
+    mergerDetails?: { acquiring: string, acquired: string };
+    allianceDetails?: { partners: string[] };
+    imageUrl: string;
+    headline: string;
+    summary: string;
+    fullText: string;
+    region?: Region | 'Global';
+}
+
 export interface Investor {
   id: string;
   name: string;
+  isHuman?: boolean;
+  strategyName?: string;
+  strategy: InvestorStrategy | ComplexInvestorStrategy | HyperComplexInvestorStrategy;
   cash: number;
   portfolio: PortfolioItem[];
-  strategy: InvestorStrategy | ComplexInvestorStrategy | HyperComplexInvestorStrategy;
-  strategyName?: string;
   portfolioHistory: PortfolioValueHistoryPoint[];
   taxLossCarryforward: number;
   totalTaxesPaid: number;
   waAnnualNetLTCG: number;
-  isHuman?: boolean;
   recentTrades: RecentTrade[];
-}
-
-export interface ActiveEvent {
-    id: string; // Unique ID for each event
-    day: number;
-    stockSymbol: string | null;
-    stockName: string | null;
-    eventName: string; // The raw event name, e.g., "FDA Approval"
-    description: string; // The raw event description
-    headline: string; // The generated, catchy headline
-    summary: string; // A short, generated summary for cards
-    fullText: string; // The full, generated article text
-    // Fix: Expanded type to include 'political' and 'disaster' to match usage in services, resolving comparison errors.
-    type: 'positive' | 'negative' | 'neutral' | 'split' | 'alliance' | 'merger' | 'political' | 'disaster';
-    impact?: number | Record<string, number>; // Made optional for neutral/descriptive events
-    imageUrl?: string;
-    splitDetails?: { symbol: string; ratio: number; };
-    allianceDetails?: { partners: [string, string]; };
-    mergerDetails?: { acquiring: string; acquired: string; };
 }
 
 export interface TrackedCorporateAction {
     startDay: number;
     evaluationDay: number;
     stockSymbol: string;
-    actionType: 'alliance' | 'acquisition' | 'split';
-    indicatorValuesAtAction: number[]; // Stored as an ordered array for backpropagation
+    actionType: 'split' | 'alliance' | 'acquisition';
+    indicatorValuesAtAction: number[];
     startingStockPrice: number;
     startingMarketIndex: number;
 }
 
+export interface NewsPickerAI {
+    network: NeuralNetwork;
+    learningRate: number;
+}
+
+export interface TrackedNewsEvent {
+    startDay: number;
+    evaluationDay: number;
+    inputIndicators: number[];
+    chosenCategoryIndex: number;
+    startingMarketIndex: number;
+}
+
+export interface TrackedGeneratedArticle {
+    startDay: number;
+    evaluationDay: number;
+    startingMarketIndex: number;
+    generatedTokens: TokenType[];
+}
+
 export interface SimulationState {
   day: number;
-  time: string; // Authoritative clock for the simulation
-  startDate: string; // ISO string for the start date of the simulation
+  time: string;
+  startDate: string;
   stocks: Stock[];
   investors: Investor[];
-  activeEvent: ActiveEvent | null; // This will hold the "featured" or most significant event
-  eventHistory: ActiveEvent[]; // This will hold all recent events, including minor ones
+  activeEvent: ActiveEvent | null;
+  eventHistory: ActiveEvent[];
   marketIndexHistory: SimplePriceDataPoint[];
   nextCorporateEventDay: number;
   nextMacroEventDay: number;
   trackedCorporateActions: TrackedCorporateAction[];
+  newsPickerAI: NewsPickerAI;
+  trackedNewsEvents: TrackedNewsEvent[];
+  trackedGeneratedArticles: TrackedGeneratedArticle[];
 }
 
-export type Page = 'home' | 'portfolio' | 'markets' | 'aii';
-
-// Data structure for the enhanced markets page table
 export interface StockListData extends Stock {
     price: number;
     change: number;
@@ -166,3 +190,5 @@ export interface StockListData extends Stock {
     low52w: number;
     trendingScore: number;
 }
+
+export type Page = 'home' | 'portfolio' | 'markets' | 'aii';

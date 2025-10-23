@@ -1,13 +1,34 @@
 import React from 'react';
-import { InvestorStrategy, ComplexInvestorStrategy, HyperComplexInvestorStrategy } from './types';
+import { InvestorStrategy, ComplexInvestorStrategy, HyperComplexInvestorStrategy, Region, Investor } from './types';
 import { NeuralNetwork } from './services/neuralNetwork';
+
+interface StockConfig {
+    symbol: string;
+    name: string;
+    sector: string;
+    region: Region;
+}
+
+// Defines the categories for macro events, which correspond to the output neurons of the News Picker AI.
+export const NEWS_EVENT_CATEGORIES = [
+    'PositiveNA', 'NegativeNA',
+    'PositiveEU', 'NegativeEU',
+    'PositiveAsia', 'NegativeAsia',
+    'PositiveGlobal', 'NegativeGlobal',
+    'PoliticalGlobal', 'DisasterGlobal'
+] as const;
+
+export type NewsEventCategory = typeof NEWS_EVENT_CATEGORIES[number];
+
 
 // Fix: Add a specific type for corporate event configurations to improve type safety.
 interface CorporateEventConfig {
   name: string;
   description: string;
-  impact?: number; // Made optional for neutral events
+  impact?: number | Record<string, number>; // Made optional for neutral events
   type: 'positive' | 'negative' | 'neutral' | 'political' | 'disaster';
+  region?: Region | 'Global';
+  category?: NewsEventCategory;
 }
 
 type InvestorConfig = {
@@ -18,8 +39,41 @@ type InvestorConfig = {
   strategy: InvestorStrategy | ComplexInvestorStrategy | HyperComplexInvestorStrategy;
 };
 
+// Shuffle array in place
+// Fix: Add a trailing comma to the generic type parameter list to disambiguate from a JSX tag for the TSX parser.
+const shuffle = <T,>(array: T[]): T[] => {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
 
-export const STOCK_SYMBOLS = [
+// Assign regions to stocks based on real-world market cap distribution
+// Proportions: North America (~60%), Asia (~25%), Europe (~15%)
+const assignRegionsToStocks = (stocks: Omit<StockConfig, 'region'>[]): StockConfig[] => {
+    const totalStocks = stocks.length;
+    const shuffled = shuffle([...stocks]);
+    
+    const naCount = Math.floor(totalStocks * 0.60);
+    const asiaCount = Math.floor(totalStocks * 0.25);
+    // const europeCount = totalStocks - naCount - asiaCount;
+
+    return shuffled.map((stock, index) => {
+        let region: Region;
+        if (index < naCount) {
+            region = 'North America';
+        } else if (index < naCount + asiaCount) {
+            region = 'Asia';
+        } else {
+            region = 'Europe';
+        }
+        return { ...stock, region };
+    });
+};
+
+
+const BASE_STOCKS: Omit<StockConfig, 'region'>[] = [
   { symbol: 'INNV', name: 'Innovate Corp', sector: 'Technology' },
   { symbol: 'TECH', name: 'TechGen Inc.', sector: 'Technology' },
   { symbol: 'HLTH', name: 'HealthSphere', sector: 'Health' },
@@ -354,6 +408,8 @@ export const STOCK_SYMBOLS = [
   { symbol: 'LATH', name: 'Lathe-Masters', sector: 'Industrials' },
 ];
 
+export const STOCK_SYMBOLS = assignRegionsToStocks(BASE_STOCKS);
+
 export const ICONS = {
     play: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>,
     pause: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h1a1 1 0 001-1V8a1 1 0 00-1-1H8zm3 0a1 1 0 00-1 1v4a1 1 0 001 1h1a1 1 0 001-1V8a1 1 0 00-1-1h-1z" clipRule="evenodd" /></svg>,
@@ -376,7 +432,7 @@ export const MIN_INITIAL_STOCK_PRICE = 8;
 export const MAX_INITIAL_STOCK_PRICE = 12;
 export const INITIAL_HISTORY_LENGTH = 252; // Approx 1 year
 export const HUMAN_INITIAL_INVESTOR_CASH = 1_000_000;
-export const AI_INITIAL_INVESTOR_CASH = 100;
+export const AI_INITIAL_INVESTOR_CASH = 100_000;
 export const INFLATION_RATE = 0.02 / 365; // Daily inflation rate
 
 export const TAX_CONSTANTS = {
@@ -460,16 +516,25 @@ export const CORPORATE_EVENTS_BY_SECTOR: Record<string, Record<'positive' | 'neg
 };
 
 export const MACRO_EVENTS: CorporateEventConfig[] = [
-    { name: "Interest Rate Hike", description: "The Federal Reserve unexpectedly raises interest rates.", impact: 0.98, type: 'negative' },
-    { name: "Interest Rate Cut", description: "The Federal Reserve unexpectedly cuts interest rates.", impact: 1.02, type: 'positive' },
-    { name: "Positive Jobs Report", description: "The national jobs report is much stronger than expected.", impact: 1.01, type: 'positive' },
-    { name: "Geopolitical Tensions", description: "New geopolitical tensions flare up overseas.", impact: 0.99, type: 'negative' },
-    { name: "Major Hurricane Forms", description: "A category 5 hurricane is threatening major coastal industrial zones, disrupting shipping and energy production.", impact: 0.985, type: 'disaster' },
-    { name: "Key Trade Deal Signed", description: "A new international trade agreement is signed between major economic blocs, expected to boost exports and reduce tariffs.", impact: 1.015, type: 'political' },
-    { name: "Snap Election Called", description: "A surprise election in a key G7 market introduces significant political uncertainty for the coming months.", impact: 0.99, type: 'political' },
-    { name: "Massive Earthquake Strikes", description: "A powerful 7.8 magnitude earthquake has disrupted supply chains in a critical microchip manufacturing region.", impact: 0.97, type: 'disaster' },
-    { name: "Government Infrastructure Bill", description: "A massive infrastructure spending bill is passed, promising to boost the Industrials and Energy sectors.", impact: 1.02, type: 'political' },
-    { name: "Widespread Flooding", description: "Unprecedented flooding across key agricultural regions is expected to impact food prices and related industries.", impact: 0.99, type: 'disaster' },
+    { name: "Interest Rate Hike", description: "The Federal Reserve unexpectedly raises interest rates, cooling the economy.", impact: { 'North America': 0.98, 'Europe': 0.99, 'Asia': 0.99 }, type: 'negative', region: 'North America', category: 'NegativeNA' },
+    { name: "Interest Rate Cut", description: "The European Central Bank (ECB) cuts rates to stimulate growth.", impact: { 'Europe': 1.02, 'North America': 1.005, 'Asia': 1.005 }, type: 'positive', region: 'Europe', category: 'PositiveEU' },
+    { name: "Positive Jobs Report", description: "The North American jobs report is much stronger than expected.", impact: { 'North America': 1.01, 'Europe': 1.002, 'Asia': 1.002 }, type: 'positive', region: 'North America', category: 'PositiveNA' },
+    { name: "Geopolitical Tensions Flare", description: "New geopolitical tensions flare up overseas, affecting global markets.", impact: 0.99, type: 'political', region: 'Global', category: 'PoliticalGlobal' },
+    { name: "Asian Manufacturing Boom", description: "Asian manufacturing data shows a massive boom, exceeding all forecasts.", impact: { 'Asia': 1.025, 'North America': 1.005, 'Europe': 1.005 }, type: 'positive', region: 'Asia', category: 'PositiveAsia' },
+    { name: "Major Hurricane Forms", description: "A category 5 hurricane is threatening major coastal industrial zones, disrupting shipping and energy production.", impact: 0.985, type: 'disaster', region: 'North America', category: 'DisasterGlobal' },
+    { name: "Key Global Trade Deal Signed", description: "A new international trade agreement is signed between major economic blocs, expected to boost exports and reduce tariffs.", impact: 1.015, type: 'political', region: 'Global', category: 'PoliticalGlobal' },
+    { name: "Snap Election Called", description: "A surprise election in a key European market introduces significant political uncertainty.", impact: { 'Europe': 0.99, 'North America': 0.998, 'Asia': 0.998 }, type: 'political', region: 'Europe', category: 'NegativeEU' },
+    { name: "Massive Earthquake Strikes", description: "A powerful 7.8 magnitude earthquake has disrupted supply chains in a critical Asian microchip manufacturing region.", impact: { 'Asia': 0.97, 'North America': 0.99, 'Europe': 0.99 }, type: 'disaster', region: 'Asia', category: 'DisasterGlobal' },
+    { name: "Global Infrastructure Bill", description: "A massive global infrastructure spending bill is passed, promising to boost the Industrials and Energy sectors worldwide.", impact: 1.02, type: 'political', region: 'Global', category: 'PositiveGlobal' },
+    { name: "Widespread Flooding", description: "Unprecedented flooding across key agricultural regions is expected to impact food prices and related industries.", impact: 0.99, type: 'disaster', region: 'Global', category: 'DisasterGlobal' },
+    { name: "New Tech Sector Regulations", description: "Governments announce sweeping new regulations for the tech sector, impacting data privacy and competition.", impact: { 'Technology': 0.95 }, type: 'political', region: 'Global', category: 'PoliticalGlobal'},
+    { name: "Global Trade War Escalates", description: "A trade war between major economic blocs escalates, with new tariffs announced on a wide range of goods.", impact: 0.97, type: 'political', region: 'Global', category: 'PoliticalGlobal' },
+    { name: "Major Cyber Attack", description: "A sophisticated cyber attack disrupts financial networks across Europe, causing temporary market chaos.", impact: { 'Europe': 0.98, 'Finance': 0.96 }, type: 'disaster', region: 'Europe', category: 'DisasterGlobal' },
+    { name: "Widespread Wildfires", description: "Severe wildfires in key industrial and residential zones are causing massive economic disruption and supply chain issues.", impact: 0.98, type: 'disaster', region: 'North America', category: 'DisasterGlobal' },
+    { name: "Sudden Diplomatic Thaw", description: "A surprising diplomatic breakthrough between rival nations eases long-standing tensions, boosting investor confidence.", impact: 1.01, type: 'political', region: 'Global', category: 'PoliticalGlobal' },
+    { name: "Global Famine Warning", description: "International agencies issue a severe famine warning for several regions due to drought and conflict, impacting agricultural commodities.", impact: { 'Industrials': 1.02, default: 0.99 }, type: 'disaster', region: 'Global', category: 'DisasterGlobal' },
+    { name: "Energy Sanctions Imposed", description: "Major energy-producing nations face new international sanctions, causing a spike in global energy prices.", impact: { 'Energy': 1.10, default: 0.98 }, type: 'political', region: 'Global', category: 'PoliticalGlobal' },
+    { name: "Unexpected Political Scandal", description: "A major political scandal in an Asian economic power leads to leadership uncertainty and market jitters.", impact: { 'Asia': 0.98 }, type: 'political', region: 'Asia', category: 'NegativeAsia'},
 ];
 
 export const INDICATOR_NEURONS = [
@@ -483,7 +548,23 @@ export const INDICATOR_NEURONS = [
     'volatility_bollinger_bandwidth_20', 'volatility_bollinger_percent_b_20',
     'macd_histogram',
     'volume_avg_20d_spike', 'volume_obv_trend_20d', 'volume_cmf_20',
-    'volatility_atr_14'
+    'volatility_atr_14',
+    'sector_momentum_50d', 'region_momentum_50d',
+    'event_sentiment_recent', 'event_impact_magnitude', 'event_type_is_macro', 'event_type_is_corporate'
+];
+
+export const CORPORATE_NEURONS = [
+    'self_momentum_50d', 'self_volatility_atr_14', 'price_vs_ath',
+    'market_momentum_50d', 'sector_momentum_50d', 'region_momentum_50d', 'opportunity_score',
+    'event_sentiment_recent', 'event_impact_magnitude', 'event_type_is_macro', 'event_type_is_corporate'
+];
+
+export const NEWS_PICKER_NEURONS = [
+    'market_momentum_50d',
+    'market_momentum_200d',
+    'market_volatility_atr_20d',
+    'market_avg_pe_ratio',
+    'positive_event_ratio_30d', // Ratio of positive to total events in the last 30 days
 ];
 
 const createNeuralNetwork = (layerSizes: number[], inputNeuronNames: string[]): NeuralNetwork => {
@@ -492,16 +573,6 @@ const createNeuralNetwork = (layerSizes: number[], inputNeuronNames: string[]): 
 };
 
 const STRATEGY_NAMES = ["Momentum Bot", "Value Seeker", "Quant Algo", "Risk Manager", "Trend Follower", "Contrarian", "Growth Chaser", "Index Follower", "Volatility Trader", "Sector Rotator", "Alpha Hunter"];
-
-// Shuffle array in place
-// Fix: Add a trailing comma to the generic type parameter list to disambiguate from a JSX tag for the TSX parser.
-const shuffle = <T,>(array: T[]): T[] => {
-    for (let i = array.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [array[i], array[j]] = [array[j], array[i]];
-    }
-    return array;
-}
 
 export const buildInvestors = (): InvestorConfig[] => {
     const aiInvestors: InvestorConfig[] = [];

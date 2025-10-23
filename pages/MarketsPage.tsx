@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { Stock, StockListData } from '../types';
+import { Stock, StockListData, Region } from '../types';
 import StockMarketTable from '../components/StockMarketTable';
 import MarketHeatmap from '../components/MarketHeatmap';
 
@@ -36,6 +36,24 @@ const ViewModeToggle: React.FC<{ viewMode: ViewMode; setViewMode: (mode: ViewMod
     </div>
 );
 
+const RegionFilter: React.FC<{ selectedRegion: Region | 'Global'; onSelectRegion: (region: Region | 'Global') => void }> = ({ selectedRegion, onSelectRegion }) => {
+    const regions: (Region | 'Global')[] = ['Global', 'North America', 'Europe', 'Asia'];
+    return (
+        <div className="flex items-center bg-gray-900 rounded-md p-0.5">
+            {regions.map(region => (
+                <button
+                    key={region}
+                    onClick={() => onSelectRegion(region)}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${selectedRegion === region ? 'bg-accent text-white' : 'text-gray-400 hover:bg-gray-700'}`}
+                >
+                    {region}
+                </button>
+            ))}
+        </div>
+    );
+};
+
+
 const MarketsPage: React.FC<{
     stocks: Stock[];
     onSelectStock: (symbol: string) => void;
@@ -43,6 +61,7 @@ const MarketsPage: React.FC<{
 }> = ({ stocks, onSelectStock, searchQuery }) => {
     const [activeTab, setActiveTab] = useState<MarketListType>('active');
     const [viewMode, setViewMode] = useState<ViewMode>('table');
+    const [selectedRegion, setSelectedRegion] = useState<Region | 'Global'>('Global');
     const [sortConfig, setSortConfig] = useState<{ key: keyof StockListData; direction: 'asc' | 'desc' } | null>({ key: 'marketCap', direction: 'desc'});
     
     const handleSort = useCallback((key: keyof StockListData) => {
@@ -54,7 +73,11 @@ const MarketsPage: React.FC<{
     }, [sortConfig]);
 
     const marketData = useMemo(() => {
-        const stocksWithMetrics = stocks.map(stock => {
+        const regionalStocks = selectedRegion === 'Global' 
+            ? stocks
+            : stocks.filter(s => s.region === selectedRegion);
+
+        const stocksWithMetrics = regionalStocks.map(stock => {
             const history = stock.history;
             const current = history[history.length - 1];
             const prev = history[history.length - 2];
@@ -102,7 +125,7 @@ const MarketsPage: React.FC<{
         };
 
         return data;
-    }, [stocks]);
+    }, [stocks, selectedRegion]);
     
     const sortedAndFilteredData = useMemo(() => {
         let data = marketData[activeTab] || [];
@@ -146,11 +169,11 @@ const MarketsPage: React.FC<{
     return (
         <div>
             <div className="mb-4">
-                <h1 className="text-2xl font-bold text-gray-200">{pageTitle}</h1>
+                <h1 className="text-2xl font-bold text-gray-200">{`${selectedRegion} ${pageTitle}`}</h1>
                 <p className="text-gray-400">Explore market data from different perspectives.</p>
             </div>
 
-            <div className="border-b border-gray-700 mb-4 flex justify-between items-center">
+            <div className="border-b border-gray-700 mb-4 flex justify-between items-center flex-wrap gap-2">
                 <nav className="-mb-px flex space-x-2" aria-label="Tabs">
                     {TABS.map(tab => (
                         <MarketTab
@@ -164,7 +187,10 @@ const MarketsPage: React.FC<{
                         />
                     ))}
                 </nav>
-                 <ViewModeToggle viewMode={viewMode} setViewMode={setViewMode} />
+                <div className="flex items-center gap-2">
+                     <RegionFilter selectedRegion={selectedRegion} onSelectRegion={setSelectedRegion} />
+                     <ViewModeToggle viewMode={viewMode} setViewMode={setViewMode} />
+                </div>
             </div>
             
              <div className="bg-gray-800 rounded-md border border-gray-700">

@@ -88,14 +88,18 @@ const App: React.FC = () => {
 
   const handlePlayerBuy = useCallback((symbol: string, shares: number) => {
     if (!simulationState) return;
-    const newState = playerBuyStock(simulationState, 'human-player', symbol, shares);
-    setSimulationState(newState);
+    setSimulationState(prevState => {
+      if (!prevState) return null;
+      return playerBuyStock(prevState, 'human-player', symbol, shares);
+    });
   }, [simulationState]);
   
   const handlePlayerSell = useCallback((symbol: string, shares: number) => {
       if (!simulationState) return;
-      const newState = playerSellStock(simulationState, 'human-player', symbol, shares);
-      setSimulationState(newState);
+      setSimulationState(prevState => {
+        if (!prevState) return null;
+        return playerSellStock(prevState, 'human-player', symbol, shares);
+      });
   }, [simulationState]);
 
   const handleSearchChange = useCallback((query: string) => {
@@ -104,15 +108,6 @@ const App: React.FC = () => {
 
 
   const activeStocks = useMemo(() => simulationState?.stocks.filter(s => !s.isDelisted) || [], [simulationState?.stocks]);
-
-  const filteredStocks = useMemo(() => {
-    if (!searchQuery) return activeStocks;
-    const lowercasedQuery = searchQuery.toLowerCase();
-    return activeStocks.filter(stock => 
-      stock.name.toLowerCase().includes(lowercasedQuery) ||
-      stock.symbol.toLowerCase().includes(lowercasedQuery)
-    );
-  }, [activeStocks, searchQuery]);
 
   const filteredInvestors = useMemo(() => {
     if (!searchQuery || !simulationState) return simulationState?.investors.filter(i => !i.isHuman) || [];
@@ -161,10 +156,8 @@ const App: React.FC = () => {
                 onSelectStock={handleSelectStock}
             />
         case 'markets':
-            // FIX: Removed unsupported `marketHistory` prop. The MarketsPage component
-            // does not accept this prop, which was causing a type error.
             return <MarketsPage 
-                stocks={filteredStocks}
+                stocks={activeStocks}
                 onSelectStock={handleSelectStock}
                 searchQuery={searchQuery}
             />;
