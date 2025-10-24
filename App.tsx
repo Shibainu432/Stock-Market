@@ -19,7 +19,13 @@ const App: React.FC = () => {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [activePage, setActivePage] = useState<Page>('home');
   const [searchQuery, setSearchQuery] = useState('');
+  const [worldClockCount, setWorldClockCount] = useState<number>(3);
   const intervalRef = useRef<number | null>(null);
+
+  const simulationStateRef = useRef<SimulationState | null>(simulationState);
+  useEffect(() => {
+    simulationStateRef.current = simulationState;
+  }, [simulationState]);
 
   const handleReset = useCallback(() => {
     setIsRunning(false);
@@ -33,30 +39,28 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (isRunning) {
-      intervalRef.current = window.setInterval(() => {
-        try {
-          setSimulationState(prevState => {
-            if (!prevState) return null;
-            return advanceTime(prevState, speed);
-          });
-        } catch (error) {
-          console.error("Error advancing simulation time:", error);
-          // The simulation will attempt to run again on the next interval
-          // and won't crash the entire application due to a single error.
-        }
-      }, 1000); // Run the simulation loop every 1 second.
+        intervalRef.current = window.setInterval(() => {
+            if (!simulationStateRef.current) return;
+            try {
+                const nextState = advanceTime(simulationStateRef.current, speed);
+                setSimulationState(nextState);
+            } catch (error) {
+                console.error("Error advancing simulation time:", error);
+            }
+        }, 1000);
     } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
+        if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+        }
     }
 
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
+        if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+        }
     };
   }, [isRunning, speed]);
+
 
   const handlePlayPause = useCallback(() => {
     setIsRunning(prev => !prev);
@@ -104,6 +108,10 @@ const App: React.FC = () => {
 
   const handleSearchChange = useCallback((query: string) => {
     setSearchQuery(query);
+  }, []);
+
+  const handleWorldClockCountChange = useCallback((count: number) => {
+    setWorldClockCount(count);
   }, []);
 
 
@@ -210,6 +218,8 @@ const App: React.FC = () => {
         onSpeedChange={handleSpeedChange}
         searchQuery={searchQuery}
         onSearchChange={handleSearchChange}
+        worldClockCount={worldClockCount}
+        onWorldClockCountChange={handleWorldClockCountChange}
       />
       
       <main className="max-w-screen-2xl mx-auto p-2 md:p-4">

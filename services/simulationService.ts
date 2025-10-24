@@ -1,8 +1,7 @@
-
-import { SimulationState, Stock, Investor, SimplePriceDataPoint, PortfolioItem, ShareLot, ActiveEvent, HyperComplexInvestorStrategy, TrackedCorporateAction, OHLCDataPoint, Region, TrackedNewsEvent, NewsPickerAI, TrackedGeneratedArticle, LearningToken, RandomInvestorStrategy } from '../types';
-import { STOCK_SYMBOLS, MIN_INITIAL_STOCK_PRICE, MAX_INITIAL_STOCK_PRICE, INITIAL_HISTORY_LENGTH, HUMAN_INITIAL_INVESTOR_CASH, AI_INITIAL_INVESTOR_CASH, buildInvestors, INFLATION_RATE, TAX_CONSTANTS, CORPORATE_EVENTS_BY_SECTOR, MACRO_EVENTS, WASHINGTON_B_AND_O_TAX_RATES_BY_SECTOR, MIN_CORPORATE_ACTION_INTERVAL, CORPORATE_ACTION_INTERVAL_RANGE, MIN_STOCK_SPLIT_PRICE, INDICATOR_NEURONS, CORPORATE_NEURONS, NEWS_PICKER_NEURONS, NEWS_EVENT_CATEGORIES } from '../constants';
+import { SimulationState, Stock, Investor, SimplePriceDataPoint, PortfolioItem, ShareLot, ActiveEvent, HyperComplexInvestorStrategy, TrackedCorporateAction, OHLCDataPoint, Region, TrackedGeneratedArticle, RandomInvestorStrategy, MicroLLM } from '../types';
+import { STOCK_SYMBOLS, MIN_INITIAL_STOCK_PRICE, MAX_INITIAL_STOCK_PRICE, INITIAL_HISTORY_LENGTH, HUMAN_INITIAL_INVESTOR_CASH, AI_INITIAL_INVESTOR_CASH, buildInvestors, INFLATION_RATE, TAX_CONSTANTS, CORPORATE_EVENTS_BY_SECTOR, MACRO_EVENTS, WASHINGTON_B_AND_O_TAX_RATES_BY_SECTOR, MIN_CORPORATE_ACTION_INTERVAL, CORPORATE_ACTION_INTERVAL_RANGE, MIN_STOCK_SPLIT_PRICE, INDICATOR_NEURONS, CORPORATE_NEURONS } from '../constants';
 import { getImageForEvent } from './imageService';
-import { generateNewsArticle, newsGeneratorAI } from './newsGenerationService';
+import { generateNewsArticle, createMicroLLM, learnFromArticleOutcome, refineLLMWithCorpus } from './newsGenerationService';
 import { NeuralNetwork } from './neuralNetwork';
 
 // Helper to generate a random price/volume walk with OHLC data
@@ -75,7 +74,6 @@ export const initializeState = (): SimulationState => {
   
   const day = INITIAL_HISTORY_LENGTH;
 
-  // Initialize market index history
   const marketIndexHistory: SimplePriceDataPoint[] = [];
   for(let i = 0; i < INITIAL_HISTORY_LENGTH; i++) {
       const avgPrice = stocks.reduce((sum, stock) => sum + stock.history[i].close, 0) / stocks.length;
@@ -85,29 +83,20 @@ export const initializeState = (): SimulationState => {
   const initialTime = new Date(startDate.getTime());
   initialTime.setDate(initialTime.getDate() + day);
   
-  const newsPickerNN = new NeuralNetwork(
-      [NEWS_PICKER_NEURONS.length, 10, NEWS_EVENT_CATEGORIES.length], 
-      NEWS_PICKER_NEURONS
-  );
-
   return {
     day,
     time: initialTime.toISOString(),
     startDate: startDate.toISOString(),
     stocks,
     investors,
-    activeEvent: null, // Initialized as null, will be set for significant events
+    activeEvent: null,
     eventHistory: [],
     marketIndexHistory,
     nextCorporateEventDay: day + 50 + Math.floor(Math.random() * 50),
     nextMacroEventDay: day + 200 + Math.floor(Math.random() * 165),
     trackedCorporateActions: [],
-    newsPickerAI: {
-        network: newsPickerNN,
-        learningRate: 0.01,
-    },
-    trackedNewsEvents: [],
-    trackedGeneratedArticles: [],
+    microLLM: createMicroLLM(),
+    trackedArticles: [],
   };
 };
 
@@ -122,18 +111,15 @@ const calculateIndicators = (stock: Stock, allStocks: Stock[], eventHistory: Act
     const currentPrice = prices[prices.length - 1];
     const prevPrice = prices[prices.length - 2];
 
-    // Momentum
     [5, 10, 20, 50].forEach(p => {
         if(prices.length > p) indicators[`momentum_${p}d`] = (currentPrice / prices[prices.length - 1 - p]) - 1;
     });
-    // New 1-day vs avg 5-day momentum
     if (prices.length > 5) {
-        const avg5d = prices.slice(-5, -1).reduce((s,v) => s+v, 0) / 4; // Exclude current day
+        const avg5d = prices.slice(-5, -1).reduce((s,v) => s+v, 0) / 4;
         if(avg5d > 0) indicators['momentum_1d_vs_avg5d'] = (currentPrice / avg5d) - 1;
     }
 
 
-    // SMA
     const smas: Record<string, number> = {};
     [10, 20, 50, 100, 200].forEach(p => {
         if (prices.length >= p) {
@@ -143,12 +129,10 @@ const calculateIndicators = (stock: Stock, allStocks: Stock[], eventHistory: Act
         }
     });
 
-    // SMA Crossovers
     if(smas[10] && smas[20]) indicators['trend_sma_crossover_10_20'] = (smas[10] - smas[20]) / smas[20];
     if(smas[20] && smas[50]) indicators['trend_sma_crossover_20_50'] = (smas[20] - smas[50]) / smas[50];
     if(smas[50] && smas[200]) indicators['trend_sma_crossover_50_200'] = (smas[50] - smas[200]) / smas[50];
     
-    // EMA & Crossovers
     const calculateEMA = (data: number[], period: number) => {
         if(data.length < period) return null;
         const k = 2 / (period + 1);
@@ -169,7 +153,6 @@ const calculateIndicators = (stock: Stock, allStocks: Stock[], eventHistory: Act
     if(emas[10] && emas[20]) indicators['trend_ema_crossover_10_20'] = (emas[10] - emas[20]) / emas[20];
     if(emas[20] && emas[50]) indicators['trend_ema_crossover_20_50'] = (emas[20] - emas[50]) / emas[50];
 
-    // RSI
     [7, 14, 21].forEach(p => {
         if(prices.length > p) {
             const slice = prices.slice(-p-1);
@@ -184,14 +167,13 @@ const calculateIndicators = (stock: Stock, allStocks: Stock[], eventHistory: Act
             if (avgLoss > 0) {
                 const rs = avgGain / avgLoss;
                 const rsi = 100 - (100 / (1 + rs));
-                indicators[`oscillator_rsi_${p}_contrarian`] = (50 - rsi) / 50; // Normalize to -1 to 1 range
+                indicators[`oscillator_rsi_${p}_contrarian`] = (50 - rsi) / 50;
             } else {
                  indicators[`oscillator_rsi_${p}_contrarian`] = 0;
             }
         }
     });
     
-    // Stochastic Oscillator
     const stochPeriod = 14;
     if(prices.length >= stochPeriod) {
         const slice = prices.slice(-stochPeriod);
@@ -201,7 +183,6 @@ const calculateIndicators = (stock: Stock, allStocks: Stock[], eventHistory: Act
         indicators['oscillator_stochastic_k_14_contrarian'] = (50 - K) / 50;
     }
 
-    // Bollinger Bands
     const bbPeriod = 20;
     if(smas[bbPeriod]) {
         const stdDev = Math.sqrt(prices.slice(-bbPeriod).map(p => Math.pow(p - smas[bbPeriod], 2)).reduce((a, b) => a + b) / bbPeriod);
@@ -211,21 +192,18 @@ const calculateIndicators = (stock: Stock, allStocks: Stock[], eventHistory: Act
         if(upper > lower) indicators['volatility_bollinger_percent_b_20'] = (currentPrice - lower) / (upper - lower);
     }
     
-    // MACD
     const ema12 = calculateEMA(prices, 12);
     const ema26 = calculateEMA(prices, 26);
     if(ema12 && ema26) {
         indicators['macd_histogram'] = (ema12 - ema26) / ema26;
     }
     
-    // Volume
     const volPeriod = 20;
     if(volumes.length >= volPeriod) {
         const avgVol = volumes.slice(-volPeriod).reduce((s, v) => s + v, 0) / volPeriod;
         indicators['volume_avg_20d_spike'] = (volumes[volumes.length - 1] - avgVol) / avgVol;
     }
 
-    // OBV (On-Balance Volume) trend
     const obvPeriod = 20;
     if (prices.length >= obvPeriod && volumes.length >= obvPeriod) {
         let obv = 0;
@@ -239,31 +217,28 @@ const calculateIndicators = (stock: Stock, allStocks: Stock[], eventHistory: Act
         if(obvSma !== 0) indicators['volume_obv_trend_20d'] = (obv - obvSma) / Math.abs(obvSma);
     }
 
-    // CMF (Chaikin Money Flow)
     const cmfPeriod = 20;
     if (prices.length >= cmfPeriod && volumes.length >= cmfPeriod) {
         let mfvs = 0;
         let volSum = 0;
         for (let i = prices.length - cmfPeriod; i < prices.length; i++) {
-            const mfm = (prices[i] - prevPrice) > 0 ? 1 : -1; // Simplified MFM for OHLC
+            const mfm = (prices[i] - prevPrice) > 0 ? 1 : -1;
             mfvs += mfm * volumes[i];
             volSum += volumes[i];
         }
         if(volSum > 0) indicators['volume_cmf_20'] = mfvs / volSum;
     }
 
-    // ATR (Average True Range) approximation
     const atrPeriod = 14;
     if (prices.length > atrPeriod) {
         const trs = [];
         for (let i = prices.length - atrPeriod; i < prices.length; i++) {
-            trs.push(Math.abs(prices[i] - prices[i-1])); // Simplified TR
+            trs.push(Math.abs(prices[i] - prices[i-1]));
         }
         const atr = trs.reduce((s,v) => s+v, 0) / atrPeriod;
-        if (currentPrice > 0) indicators['volatility_atr_14'] = atr / currentPrice; // Normalized
+        if (currentPrice > 0) indicators['volatility_atr_14'] = atr / currentPrice;
     }
 
-    // Sector & Region Momentum
     const calcGroupMomentum = (group: Stock[]) => {
         if (group.length > 0 && group[0].history.length > 50) {
             const currentGroupIndex = group.reduce((sum, s) => sum + s.history.slice(-1)[0].close, 0) / group.length;
@@ -276,7 +251,6 @@ const calculateIndicators = (stock: Stock, allStocks: Stock[], eventHistory: Act
     indicators['sector_momentum_50d'] = calcGroupMomentum(allStocks.filter(s => s.sector === stock.sector));
     indicators['region_momentum_50d'] = calcGroupMomentum(allStocks.filter(s => s.region === stock.region));
 
-    // Event-based indicators
     const lastEvent = eventHistory[0];
     if (lastEvent) {
         switch(lastEvent.type) {
@@ -322,7 +296,6 @@ const calculateWashingtonTax = (investor: Investor): number => {
     return taxableGain * TAX_CONSTANTS.WASHINGTON_LTCG_RATE;
 };
 
-// --- Real Backpropagation for AI Learning ---
 const evaluateTradesAndLearn = (investor: Investor, stocks: Stock[]) => {
     const strategy = investor.strategy as HyperComplexInvestorStrategy;
     if (!strategy.network) return;
@@ -344,13 +317,11 @@ const evaluateTradesAndLearn = (investor: Investor, stocks: Stock[]) => {
         
         let effectiveReturn = 0;
         if (trade.type === 'buy') {
-            effectiveReturn = actualReturn; // Positive return is good
-        } else { // 'sell'
-            effectiveReturn = -actualReturn; // Good sell means stock went down, so positive effective return
+            effectiveReturn = actualReturn;
+        } else {
+            effectiveReturn = -actualReturn;
         }
 
-        // The target is a value between -1 and 1, representing the "ideal" score for the decision.
-        // We use tanh to squash the return into this range. The multiplier enhances sensitivity to returns.
         const targetScore = Math.tanh(effectiveReturn * 10);
         
         const inputValues = trade.indicatorValuesAtTrade;
@@ -363,8 +334,7 @@ const evaluateTradesAndLearn = (investor: Investor, stocks: Stock[]) => {
 
 const addEventToHistory = (state: SimulationState, eventData: Omit<ActiveEvent, 'id' | 'day' | 'imageUrl' | 'headline' | 'summary' | 'fullText'>, keywords: (string | null)[]): ActiveEvent => {
     const nextDay = state.day + 1;
-    const tempEventForGen = { ...eventData, day: nextDay, id: 'temp' } as ActiveEvent;
-    const { article, learningTokens } = generateNewsArticle(tempEventForGen, state);
+    const { article, generatedText } = generateNewsArticle({ ...eventData } as ActiveEvent, state);
     
     const imageUrl = getImageForEvent(
         article.headline,
@@ -382,19 +352,17 @@ const addEventToHistory = (state: SimulationState, eventData: Omit<ActiveEvent, 
     if (state.eventHistory.length > 100) { 
         state.eventHistory.pop();
     }
-
-    // Get market volatility for advantage calculation
-    const marketIndicators = calculateMarketIndicators(state);
-    const marketVolatility = marketIndicators['market_volatility_atr_20d'] || 0.01; // Fallback to avoid division by zero
-
-    // Track the article for LLM learning
-    state.trackedGeneratedArticles.push({
-        startDay: nextDay,
-        evaluationDay: nextDay + 5, // Evaluate market reaction over 5 days
+    
+    const stock = eventData.stockSymbol ? state.stocks.find(s => s.symbol === eventData.stockSymbol) : null;
+    const trackedArticle: TrackedGeneratedArticle = {
+        eventId: newEvent.id,
+        evaluationDay: nextDay + 10,
+        generatedText,
         startingMarketIndex: state.marketIndexHistory.slice(-1)[0].price,
-        generatedTokens: learningTokens,
-        marketVolatility,
-    });
+        stockSymbol: stock ? stock.symbol : null,
+        startingStockPrice: stock ? stock.history.slice(-1)[0].close : null
+    };
+    state.trackedArticles.push(trackedArticle);
 
     return newEvent;
 };
@@ -425,7 +393,6 @@ const calculateCorporateIndicators = (stock: Stock, allStocks: Stock[], marketHi
     const valuation = (high52w > low52w) ? (currentPrice - low52w) / (high52w - low52w) : 0.5;
     indicators['opportunity_score'] = (1 - valuation) - (indicators['self_volatility_atr_14'] * 2);
 
-    // Add event-based indicators
     indicators['event_sentiment_recent'] = generalIndicators['event_sentiment_recent'] || 0;
     indicators['event_impact_magnitude'] = generalIndicators['event_impact_magnitude'] || 0;
     indicators['event_type_is_macro'] = generalIndicators['event_type_is_macro'] || 0;
@@ -452,10 +419,9 @@ const evaluateCorporateActionsAndLearn = (state: SimulationState): void => {
         const stockReturn = currentStockPrice / action.startingStockPrice;
         const marketReturn = currentMarketIndex / action.startingMarketIndex;
         
-        // Positive outcome means the stock outperformed the market after the action
         const outcome = (marketReturn > 0) ? (stockReturn / marketReturn) - 1 : stockReturn - 1;
         
-        const targetScore = Math.tanh(outcome * 5); // Squash outcome to a -1 to 1 target
+        const targetScore = Math.tanh(outcome * 5);
         const learningRate = stock.corporateAI.learningRate;
         const inputValues = action.indicatorValuesAtAction;
 
@@ -472,115 +438,56 @@ const evaluateCorporateActionsAndLearn = (state: SimulationState): void => {
     state.trackedCorporateActions = actionsToKeep;
 };
 
-const calculateMarketIndicators = (state: SimulationState): Record<string, number> => {
-    const indicators: Record<string, number> = {};
-    const { marketIndexHistory, stocks, eventHistory, day } = state;
-
-    // Market Momentum
-    if (marketIndexHistory.length > 50) {
-        indicators['market_momentum_50d'] = (marketIndexHistory.slice(-1)[0].price / marketIndexHistory.slice(-51)[0].price) - 1;
-    }
-    if (marketIndexHistory.length > 200) {
-        indicators['market_momentum_200d'] = (marketIndexHistory.slice(-1)[0].price / marketIndexHistory.slice(-201)[0].price) - 1;
-    }
-
-    // Market Volatility (Average ATR)
-    const activeStocks = stocks.filter(s => !s.isDelisted);
-    let totalAtr = 0;
-    let atrCount = 0;
-    activeStocks.forEach(stock => {
-        const stockIndicators = calculateIndicators(stock, stocks, eventHistory);
-        if (stockIndicators['volatility_atr_14']) {
-            totalAtr += stockIndicators['volatility_atr_14'];
-            atrCount++;
-        }
-    });
-    indicators['market_volatility_atr_20d'] = atrCount > 0 ? totalAtr / atrCount : 0;
-
-    // Market P/E Ratio
-    let totalPe = 0;
-    let peCount = 0;
-    activeStocks.forEach(stock => {
-        const price = stock.history.slice(-1)[0].close;
-        if (stock.eps > 0) {
-            totalPe += price / stock.eps;
-            peCount++;
-        }
-    });
-    indicators['market_avg_pe_ratio'] = peCount > 0 ? totalPe / peCount : 0;
-
-    // Positive Event Ratio
-    const recentEvents = eventHistory.filter(e => day - e.day <= 30);
-    if (recentEvents.length > 0) {
-        const positiveEvents = recentEvents.filter(e => e.type === 'positive' || (typeof e.impact === 'number' && e.impact > 1.0)).length;
-        indicators['positive_event_ratio_30d'] = positiveEvents / recentEvents.length;
-    } else {
-        indicators['positive_event_ratio_30d'] = 0.5; // Neutral if no recent events
-    }
-
-    return indicators;
-}
-
-const evaluateNewsAndLearn = (state: SimulationState): void => {
-    const nextDay = state.day + 1;
-    const currentMarketIndex = state.marketIndexHistory.slice(-1)[0].price;
-    const newsToKeep: TrackedNewsEvent[] = [];
-
-    state.trackedNewsEvents.forEach(event => {
-        if (nextDay < event.evaluationDay) {
-            newsToKeep.push(event);
-            return;
-        }
-
-        const marketReturn = (currentMarketIndex / event.startingMarketIndex) - 1;
-        const targetScore = Math.tanh(marketReturn * 20); // Amplify signal and squash to [-1, 1]
-
-        const targetArray = new Array(NEWS_EVENT_CATEGORIES.length).fill(0);
-        targetArray[event.chosenCategoryIndex] = targetScore;
-
-        state.newsPickerAI.network.backpropagate(
-            event.inputIndicators,
-            targetArray,
-            state.newsPickerAI.learningRate
-        );
-    });
-
-    state.trackedNewsEvents = newsToKeep;
-};
-
 const evaluateArticlesAndLearn = (state: SimulationState): void => {
     const nextDay = state.day + 1;
     const currentMarketIndex = state.marketIndexHistory.slice(-1)[0].price;
     const articlesToKeep: TrackedGeneratedArticle[] = [];
 
-    state.trackedGeneratedArticles.forEach(article => {
+    state.trackedArticles.forEach(article => {
         if (nextDay < article.evaluationDay) {
             articlesToKeep.push(article);
-            return; // Not time to evaluate yet
+            return;
+        }
+        
+        let outcome = 1.0; // Neutral outcome
+        const marketReturn = currentMarketIndex / article.startingMarketIndex;
+
+        if (article.stockSymbol && article.startingStockPrice) {
+            const stock = state.stocks.find(s => s.symbol === article.stockSymbol);
+            if (stock && !stock.isDelisted) {
+                const stockReturn = stock.history.slice(-1)[0].close / article.startingStockPrice;
+                // Stock outperformance relative to the market
+                outcome = marketReturn > 0 ? stockReturn / marketReturn : stockReturn;
+            }
+        } else {
+            // For macro events, the outcome is just the market return
+            outcome = marketReturn;
         }
 
-        const marketReturn = (currentMarketIndex / article.startingMarketIndex) - 1;
-        
-        // Advantage Calculation: Reward is the market return adjusted for volatility.
-        // This rewards the AI more for correct predictions in stable markets.
-        const riskAdjustedReturn = marketReturn / (article.marketVolatility || 0.01);
-        const outcome = Math.tanh(riskAdjustedReturn * 5); // Amplify signal for learning
-
-        // Tell the LLM to learn from this outcome
-        newsGeneratorAI.learn(article.generatedTokens, outcome);
+        state.microLLM = learnFromArticleOutcome(state.microLLM, article.generatedText, outcome);
     });
 
-    state.trackedGeneratedArticles = articlesToKeep;
+    state.trackedArticles = articlesToKeep;
 };
 
-const isMarketOpen = (time: Date): boolean => {
+export const isMarketOpen = (time: Date, region: Region): boolean => {
     const dayOfWeek = time.getUTCDay();
     if (dayOfWeek === 0 || dayOfWeek === 6) return false; // Saturday or Sunday
 
     const hours = time.getUTCHours() + time.getUTCMinutes() / 60;
-    const MARKET_OPEN_HOUR_UTC = 13.5; // 9:30 AM EST
-    const MARKET_CLOSE_HOUR_UTC = 20;  // 4:00 PM EST
-    return hours >= MARKET_OPEN_HOUR_UTC && hours < MARKET_CLOSE_HOUR_UTC;
+
+    switch (region) {
+        case 'North America':
+            return hours >= 13.5 && hours < 20.0;
+        case 'Europe':
+            return hours >= 7.0 && hours < 15.5;
+        case 'Asia':
+            const isMorningSession = hours >= 0.0 && hours < 2.5;
+            const isAfternoonSession = hours >= 3.5 && hours < (6 + 25/60);
+            return isMorningSession || isAfternoonSession;
+        default:
+            return false;
+    }
 }
 
 const executeTrade = (
@@ -593,7 +500,7 @@ const executeTrade = (
     indicatorValues: number[]
 ) => {
     const currentPrice = stock.history[stock.history.length - 1].close;
-    const nextDay = state.day; // Trading happens on the current day
+    const nextDay = state.day;
 
     if (type === 'buy') {
         investor.cash -= shares * currentPrice;
@@ -631,10 +538,7 @@ const executeTrade = (
 };
 
 
-const runMarketTick = (state: SimulationState, durationHours: number): SimulationState => {
-    const dailyImpacts: Record<string, number> = {};
-    state.stocks.forEach(s => dailyImpacts[s.symbol] = 1.0);
-
+const runMarketTick = (state: SimulationState, durationHours: number, currentTime: Date): SimulationState => {
     const tickTradeVolumes: Record<string, number> = {};
     const tickNetBuyShares: Record<string, number> = {};
     state.stocks.forEach(stock => {
@@ -659,7 +563,7 @@ const runMarketTick = (state: SimulationState, durationHours: number): Simulatio
                   if(Math.random() > tradeChance) return;
 
                   state.stocks.forEach(stock => {
-                      if (stock.isDelisted || !strategy.network) return;
+                      if (stock.isDelisted || !strategy.network || !isMarketOpen(currentTime, stock.region)) return;
                       const indicators = calculateIndicators(stock, state.stocks, state.eventHistory);
                       const indicatorValues = INDICATOR_NEURONS.map(name => indicators[name] || 0);
                       const score = strategy.network.feedForward(indicatorValues)[0];
@@ -690,7 +594,7 @@ const runMarketTick = (state: SimulationState, durationHours: number): Simulatio
               case 'random': {
                   const strategy = investor.strategy as RandomInvestorStrategy;
                   state.stocks.forEach(stock => {
-                      if (stock.isDelisted) return;
+                      if (stock.isDelisted || !isMarketOpen(currentTime, stock.region)) return;
                       if (Math.random() < strategy.tradeChance * (durationHours / marketHours)) {
                           const currentPrice = stock.history[stock.history.length - 1].close;
                           const portfolioItem = investor.portfolio.find(p => p.symbol === stock.symbol);
@@ -729,22 +633,18 @@ const runMarketTick = (state: SimulationState, durationHours: number): Simulatio
         const boDrag = ((WASHINGTON_B_AND_O_TAX_RATES_BY_SECTOR[stock.sector] || 0) / 365) * (durationHours / 24);
         currentPrice *= (1 - boDrag + (INFLATION_RATE * (durationHours / 24)));
     
-        if (state.activeEvent) {
-            // Event impacts are daily, so we don't apply them tick-by-tick. They are handled in daily transition.
-        }
-    
-        currentPrice *= (dailyImpacts[stock.symbol] || 1.0);
-    
-        if (isInitialChaosPeriod) {
-            const volatility = 0.15 * (durationHours / 6.5);
-            const randomChangePercent = (Math.random() - 0.5) * 2 * volatility;
-            currentPrice *= (1 + randomChangePercent);
-        } else {
-            const netBuyVolume = tickNetBuyShares[stock.symbol] || 0;
-            const priceImpactFactor = 0.1;
-            const volumePressure = (netBuyVolume / stock.sharesOutstanding) * priceImpactFactor;
-            const clampedPressure = Math.max(-0.1, Math.min(0.1, volumePressure));
-            currentPrice *= (1 + clampedPressure);
+        if(isMarketOpen(currentTime, stock.region)) {
+            if (isInitialChaosPeriod) {
+                const volatility = 0.15 * (durationHours / 6.5);
+                const randomChangePercent = (Math.random() - 0.5) * 2 * volatility;
+                currentPrice *= (1 + randomChangePercent);
+            } else {
+                const netBuyVolume = tickNetBuyShares[stock.symbol] || 0;
+                const priceImpactFactor = 0.1;
+                const volumePressure = (netBuyVolume / stock.sharesOutstanding) * priceImpactFactor;
+                const clampedPressure = Math.max(-0.1, Math.min(0.1, volumePressure));
+                currentPrice *= (1 + clampedPressure);
+            }
         }
     
         const finalPrice = Math.max(0.01, currentPrice);
@@ -761,9 +661,7 @@ const runMarketTick = (state: SimulationState, durationHours: number): Simulatio
 const runDailyTransition = (state: SimulationState): SimulationState => {
     const nextDay = state.day + 1;
 
-    // --- Learning Phase (from previous day's results) ---
     evaluateCorporateActionsAndLearn(state);
-    evaluateNewsAndLearn(state);
     evaluateArticlesAndLearn(state);
     state.investors.forEach(investor => {
         if (!investor.isHuman && investor.strategy.strategyType === 'hyperComplex') {
@@ -771,7 +669,6 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
         }
     });
 
-    // --- Daily Wrap-up (for the day that just ended) ---
     state.investors.forEach(investor => {
         const portfolioValue = investor.portfolio.reduce((sum, item) => {
             const stock = state.stocks.find(s => s.symbol === item.symbol);
@@ -799,7 +696,6 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
         });
     }
 
-    // --- Setup for New Day ---
     state.stocks.forEach(stock => {
         if (stock.isDelisted) return;
         const lastHistory = stock.history.length > 0 ? stock.history[stock.history.length - 1] : null;
@@ -812,33 +708,34 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
         state.activeEvent = null;
     }
 
-    // --- Event Generation Phase ---
-    // (This logic is copy-pasted from the original runEndOfDayLogic)
     const dailyImpacts: Record<string, number> = {};
     state.stocks.forEach(s => dailyImpacts[s.symbol] = 1.0);
   
-    // Major Macro Event
     if (nextDay >= state.nextMacroEventDay) {
-        const marketIndicators = calculateMarketIndicators(state);
-        const indicatorValues = NEWS_PICKER_NEURONS.map(name => marketIndicators[name] || 0);
-        const categoryScores = state.newsPickerAI.network.feedForward(indicatorValues);
-        const bestCategoryIndex = categoryScores.indexOf(Math.max(...categoryScores));
-        const chosenCategory = NEWS_EVENT_CATEGORIES[bestCategoryIndex];
-        const possibleEvents = MACRO_EVENTS.filter(e => e.category === chosenCategory);
-        const eventConfig = possibleEvents.length > 0 
-            ? possibleEvents[Math.floor(Math.random() * possibleEvents.length)]
-            : MACRO_EVENTS[Math.floor(Math.random() * MACRO_EVENTS.length)]; // Fallback
+        const marketMomentum = state.marketIndexHistory.length > 50 
+            ? (state.marketIndexHistory.slice(-1)[0].price / state.marketIndexHistory.slice(-51)[0].price) - 1
+            : 0;
+        
+        const isBullish = marketMomentum > 0.05;
+        const isBearish = marketMomentum < -0.05;
+        
+        let possibleEvents = MACRO_EVENTS;
+        if (isBullish && Math.random() < 0.7) {
+            possibleEvents = MACRO_EVENTS.filter(e => e.type === 'positive' || e.type === 'political');
+        } else if (isBearish && Math.random() < 0.7) {
+            possibleEvents = MACRO_EVENTS.filter(e => e.type === 'negative' || e.type === 'disaster' || e.type === 'political');
+        }
+        
+        const eventConfig = possibleEvents[Math.floor(Math.random() * possibleEvents.length)];
   
         const newMacroEvent = addEventToHistory(state, { stockSymbol: null, stockName: null, eventName: eventConfig.name, description: eventConfig.description, type: eventConfig.type as any, impact: eventConfig.impact, region: eventConfig.region }, ['macro', eventConfig.type, eventConfig.region || 'Global']);
         state.activeEvent = newMacroEvent;
         
-        state.trackedNewsEvents.push({ startDay: nextDay, evaluationDay: nextDay + 5, inputIndicators: indicatorValues, chosenCategoryIndex: bestCategoryIndex, startingMarketIndex: state.marketIndexHistory.slice(-1)[0].price });
         state.nextMacroEventDay = nextDay + 15 + Math.floor(Math.random() * 20);
     }
     
-    // Corporate AI Actions and Random Events
-    state.stocks.forEach(stock => {
-        if (stock.isDelisted) return;
+    for (const stock of state.stocks) {
+        if (stock.isDelisted) continue;
         
         let actionTaken = false;
         if (nextDay >= stock.corporateAI.nextCorporateActionDay) {
@@ -903,7 +800,7 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
                 dailyImpacts[stock.symbol] *= eventConfig.impact;
             }
         }
-    });
+    }
 
     if (state.activeEvent) {
       const applyImpact = (stock: Stock) => {
@@ -936,11 +833,8 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
 }
 
 const processTimeChunk = (state: SimulationState, chunkStartTime: Date, durationMs: number): SimulationState => {
-    if (isMarketOpen(chunkStartTime)) {
-        const durationHours = durationMs / (1000 * 60 * 60);
-        return runMarketTick(state, durationHours);
-    }
-    return state;
+    const durationHours = durationMs / (1000 * 60 * 60);
+    return runMarketTick(state, durationHours, chunkStartTime);
 }
 
 export const advanceTime = (prevState: SimulationState, secondsToAdvance: number): SimulationState => {
@@ -958,10 +852,7 @@ export const advanceTime = (prevState: SimulationState, secondsToAdvance: number
       stock.corporateAI.allianceNN = Object.assign(new NeuralNetwork([]), originalAI.allianceNN);
       stock.corporateAI.acquisitionNN = Object.assign(new NeuralNetwork([]), originalAI.acquisitionNN);
   });
-  const originalNewsAI = prevState.newsPickerAI;
-  if (state.newsPickerAI && originalNewsAI) {
-      state.newsPickerAI.network = Object.assign(new NeuralNetwork([]), originalNewsAI.network);
-  }
+  // The new MicroLLM is pure data, no need to re-instantiate classes.
 
   const startTime = new Date(state.time);
   const targetTime = new Date(startTime.getTime() + secondsToAdvance * 1000);
@@ -1005,6 +896,9 @@ export const advanceTime = (prevState: SimulationState, secondsToAdvance: number
   const startDate = new Date(state.startDate);
   const msSinceStart = new Date(state.time).getTime() - startDate.getTime();
   state.day = Math.floor(msSinceStart / (24 * 60 * 60 * 1000));
+
+  // Simulate continuous "idle-time" training for the MicroLLM
+  state.microLLM = refineLLMWithCorpus(state.microLLM);
   
   return state;
 };
@@ -1066,7 +960,6 @@ export const playerSellStock = (prevState: SimulationState, playerId: string, sy
     const currentPrice = stock.history[stock.history.length - 1].close;
     investor.cash += shares * currentPrice;
 
-    // Sell lots, FIFO
     let sharesToSell = shares;
     portfolioItem.lots.sort((a, b) => new Date(a.purchaseTime).getTime() - new Date(b.purchaseTime).getTime());
     

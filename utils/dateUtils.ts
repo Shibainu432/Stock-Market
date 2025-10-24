@@ -1,3 +1,4 @@
+
 export const getDateFromDay = (day: number, startDateISO: string): Date => {
     const startDate = new Date(startDateISO);
     const resultDate = new Date(startDate);
@@ -13,8 +14,8 @@ export const formatDate = (date: Date): string => {
     }).format(date);
 };
 
-export const formatDateTime = (date: Date): string => {
-    return new Intl.DateTimeFormat('en-US', {
+export const formatDateTime = (date: Date, timeZone?: string): string => {
+    const options: Intl.DateTimeFormatOptions = {
         year: 'numeric',
         month: 'short',
         day: 'numeric',
@@ -22,5 +23,19 @@ export const formatDateTime = (date: Date): string => {
         minute: '2-digit',
         second: '2-digit',
         hour12: true,
+    };
+    if (timeZone) {
+        options.timeZone = timeZone;
+    }
+    return new Intl.DateTimeFormat('en-US', options).format(date);
+};
+
+export const formatTime = (date: Date, timeZone: string): string => {
+    return new Intl.DateTimeFormat('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true,
+        timeZone: timeZone,
     }).format(date);
 };

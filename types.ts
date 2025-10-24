@@ -1,6 +1,20 @@
 import React from 'react';
 import { NeuralNetwork } from './services/neuralNetwork';
-import { TokenType } from './services/newsGenerationService';
+
+export interface MicroLLM {
+    // e.g. { 'He': { 'l': 1, 'y': 2 }, 'el': { 'l': 1 } }
+    transitionTable: Record<string, Record<string, number>>;
+    order: number; // The number of preceding characters the model considers (e.g., 5)
+}
+
+export interface TrackedGeneratedArticle {
+    eventId: string;
+    evaluationDay: number;
+    generatedText: string; // Storing the full text for the new learning model
+    startingMarketIndex: number;
+    stockSymbol: string | null;
+    startingStockPrice: number | null;
+}
 
 // A simple data point for charts that only need a single value over time (e.g., market index, portfolio value).
 export interface SimplePriceDataPoint {
@@ -148,32 +162,6 @@ export interface TrackedCorporateAction {
     startingMarketIndex: number;
 }
 
-export interface NewsPickerAI {
-    network: NeuralNetwork;
-    learningRate: number;
-}
-
-export interface TrackedNewsEvent {
-    startDay: number;
-    evaluationDay: number;
-    inputIndicators: number[];
-    chosenCategoryIndex: number;
-    startingMarketIndex: number;
-}
-
-export interface LearningToken {
-    token: TokenType;
-    hiddenState: number[];
-}
-
-export interface TrackedGeneratedArticle {
-    startDay: number;
-    evaluationDay: number;
-    startingMarketIndex: number;
-    generatedTokens: LearningToken[];
-    marketVolatility: number;
-}
-
 export interface SimulationState {
   day: number;
   time: string;
@@ -186,9 +174,8 @@ export interface SimulationState {
   nextCorporateEventDay: number;
   nextMacroEventDay: number;
   trackedCorporateActions: TrackedCorporateAction[];
-  newsPickerAI: NewsPickerAI;
-  trackedNewsEvents: TrackedNewsEvent[];
-  trackedGeneratedArticles: TrackedGeneratedArticle[];
+  microLLM: MicroLLM;
+  trackedArticles: TrackedGeneratedArticle[];
 }
 
 export interface StockListData extends Stock {

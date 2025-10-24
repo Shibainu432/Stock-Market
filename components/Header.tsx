@@ -1,8 +1,10 @@
+
 import React from 'react';
 import { Page, SimulationState, SimplePriceDataPoint } from '../types';
 import SimulationControls from './SimulationControls';
 import { formatDateTime } from '../utils/dateUtils';
 import LanguageSelector from './LanguageSelector';
+import WorldClocks from './WorldClocks';
 
 interface HeaderProps {
     activePage: Page;
@@ -15,6 +17,8 @@ interface HeaderProps {
     onSpeedChange: (speed: number) => void;
     searchQuery: string;
     onSearchChange: (query: string) => void;
+    worldClockCount: number;
+    onWorldClockCountChange: (count: number) => void;
 }
 
 const NavItem: React.FC<{ label: string, page: Page, activePage: Page, onNavigate: (page: Page) => void }> = ({ label, page, activePage, onNavigate }) => {
@@ -54,7 +58,7 @@ const MarketTicker: React.FC<{label: string, history: SimplePriceDataPoint[]}> =
 }
 
 const Header: React.FC<HeaderProps> = (props) => {
-    const { activePage, onNavigate, simulationState, searchQuery, onSearchChange } = props;
+    const { activePage, onNavigate, simulationState, searchQuery, onSearchChange, worldClockCount, onWorldClockCountChange } = props;
     const currentDate = new Date(simulationState.time);
 
     return (
@@ -103,6 +107,26 @@ const Header: React.FC<HeaderProps> = (props) => {
                     <NavItem label="AI Investors" page="aii" activePage={activePage} onNavigate={onNavigate} />
                 </nav>
              </div>
+             <div className="max-w-screen-2xl mx-auto border-t border-gray-800 bg-black/20 p-2 flex justify-between items-center">
+                <WorldClocks count={worldClockCount} time={currentDate} />
+
+                <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 font-medium">Show Clocks:</span>
+                    <div className="flex items-center bg-gray-800 rounded-md p-0.5">
+                        {[1, 2, 3, 4].map(num => (
+                             <button
+                                key={num}
+                                onClick={() => onWorldClockCountChange(num)}
+                                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
+                                    worldClockCount === num ? 'bg-accent text-white' : 'text-gray-400 hover:bg-gray-700'
+                                }`}
+                             >
+                                {num}
+                             </button>
+                        ))}
+                    </div>
+                </div>
+            </div>
         </header>
     );
 };

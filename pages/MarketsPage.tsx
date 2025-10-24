@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useCallback } from 'react';
+
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { Stock, StockListData, Region } from '../types';
 import StockMarketTable from '../components/StockMarketTable';
 import MarketHeatmap from '../components/MarketHeatmap';
@@ -62,8 +63,14 @@ const MarketsPage: React.FC<{
     const [activeTab, setActiveTab] = useState<MarketListType>('active');
     const [viewMode, setViewMode] = useState<ViewMode>('table');
     const [selectedRegion, setSelectedRegion] = useState<Region | 'Global'>('Global');
-    const [sortConfig, setSortConfig] = useState<{ key: keyof StockListData; direction: 'asc' | 'desc' } | null>({ key: 'marketCap', direction: 'desc'});
+    const [sortConfig, setSortConfig] = useState<{ key: keyof StockListData; direction: 'asc' | 'desc' } | null>(null);
     
+    useEffect(() => {
+        // Whenever the active tab changes, reset the column sort configuration.
+        // This ensures each tab starts with its default sort order.
+        setSortConfig(null);
+    }, [activeTab]);
+
     const handleSort = useCallback((key: keyof StockListData) => {
         let direction: 'asc' | 'desc' = 'desc';
         if (sortConfig && sortConfig.key === key && sortConfig.direction === 'desc') {
@@ -72,63 +79,48 @@ const MarketsPage: React.FC<{
         setSortConfig({ key, direction });
     }, [sortConfig]);
 
-    const marketData = useMemo(() => {
-        const regionalStocks = selectedRegion === 'Global' 
+    const stocksWithMetrics = useMemo(() => {
+        const regionalStocks = selectedRegion === 'Global'
             ? stocks
             : stocks.filter(s => s.region === selectedRegion);
 
-        const stocksWithMetrics = regionalStocks.map(stock => {
+        return regionalStocks.map(stock => {
             const history = stock.history;
+            if (history.length < 2) return null;
+
             const current = history[history.length - 1];
             const prev = history[history.length - 2];
-            if (!current || !prev) return null;
 
-            const change = current.close - prev.close;
-            const changePercent = prev.close > 0 ? (change) / prev.close : 0;
-            
+            const price = current.close;
+            const volume = current.volume;
+            const change = price - prev.close;
+            const changePercent = prev.close > 0 ? (change / prev.close) : 0;
+
             const history52w = history.slice(-252);
-            const high52w = Math.max(...history52w.map(h => h.high));
-            const low52w = Math.min(...history52w.map(h => h.low));
+            const high52w = history52w.length > 0 ? Math.max(...history52w.map(h => h.high)) : current.high;
+            const low52w = history52w.length > 0 ? Math.min(...history52w.map(h => h.low)) : current.low;
 
-            const history5d = history.slice(-5);
-            const prices5d = history5d.map(h => h.close);
-            const avgPrice5d = prices5d.length > 0 ? prices5d.reduce((a, b) => a + b, 0) / prices5d.length : 0;
-            const volatility5d = prices5d.length > 0 && avgPrice5d > 0 ? Math.sqrt(prices5d.map(p => Math.pow(p - avgPrice5d, 2)).reduce((a,b)=>a+b,0) / prices5d.length) / avgPrice5d : 0;
-            
-            const volumes5d = history5d.map(h => h.volume);
-            const avgVolume5d = volumes5d.length > 0 ? volumes5d.reduce((a, b) => a + b, 0) / volumes5d.length : 0;
-            const volumeSpike = avgVolume5d > 0 ? current.volume / avgVolume5d : 1;
-
-            const trendingScore = volatility5d * volumeSpike;
+            // A trending stock has high price movement (absolute change) and high volume.
+            // We use the logarithm of volume to temper its effect and prevent outliers from dominating.
+            const trendingScore = Math.abs(changePercent) * Math.log10(volume + 1);
 
             return {
                 ...stock,
-                price: current.close,
+                price,
                 change,
                 changePercent,
-                volume: current.volume,
-                marketCap: stock.sharesOutstanding * current.close,
-                peRatio: stock.eps > 0 ? current.close / stock.eps : 0,
+                volume,
+                marketCap: stock.sharesOutstanding * price,
+                peRatio: stock.eps > 0 ? price / stock.eps : 0,
                 high52w,
                 low52w,
                 trendingScore,
             };
         }).filter(Boolean) as StockListData[];
-
-        const data: Record<MarketListType, StockListData[]> = {
-            active: [...stocksWithMetrics].sort((a, b) => b.volume - a.volume),
-            trending: [...stocksWithMetrics].sort((a, b) => b.trendingScore - a.trendingScore),
-            gainers: [...stocksWithMetrics].sort((a, b) => b.changePercent - a.changePercent).slice(0, 50),
-            losers: [...stocksWithMetrics].sort((a, b) => a.changePercent - b.changePercent).slice(0, 50),
-            '52w_high': [...stocksWithMetrics].sort((a, b) => (b.price / b.high52w) - (a.price / a.low52w)),
-            '52w_low': [...stocksWithMetrics].sort((a, b) => (a.price / a.low52w) - (b.price / b.low52w)),
-        };
-
-        return data;
     }, [stocks, selectedRegion]);
     
-    const sortedAndFilteredData = useMemo(() => {
-        let data = marketData[activeTab] || [];
+    const displayData = useMemo(() => {
+        let data: StockListData[] = stocksWithMetrics;
         
         if (searchQuery) {
             const lowercasedQuery = searchQuery.toLowerCase();
@@ -138,22 +130,33 @@ const MarketsPage: React.FC<{
             );
         }
 
-        if (viewMode === 'table' && sortConfig !== null) {
-            data.sort((a, b) => {
-                if (a[sortConfig.key] < b[sortConfig.key]) {
-                    return sortConfig.direction === 'asc' ? -1 : 1;
+        const sortedData = [...data];
+
+        if (viewMode === 'heatmap') {
+            sortedData.sort((a,b) => b.marketCap - a.marketCap);
+        } else if (viewMode === 'table') {
+            if (sortConfig) {
+                sortedData.sort((a, b) => {
+                    if (a[sortConfig.key] < b[sortConfig.key]) return sortConfig.direction === 'asc' ? -1 : 1;
+                    if (a[sortConfig.key] > b[sortConfig.key]) return sortConfig.direction === 'asc' ? 1 : -1;
+                    return 0;
+                });
+            } else {
+                // Apply default sort for the active tab
+                switch (activeTab) {
+                    case 'active': sortedData.sort((a, b) => b.volume - a.volume); break;
+                    case 'trending': sortedData.sort((a, b) => b.trendingScore - a.trendingScore); break;
+                    case 'gainers': sortedData.sort((a, b) => b.changePercent - a.changePercent); break;
+                    case 'losers': sortedData.sort((a, b) => a.changePercent - b.changePercent); break;
+                    case '52w_high': sortedData.sort((a, b) => (b.price / b.high52w) - (a.price / a.high52w)); break;
+                    case '52w_low': sortedData.sort((a, b) => (a.price / a.low52w) - (b.price / b.low52w)); break;
+                    default: sortedData.sort((a, b) => b.marketCap - a.marketCap); break;
                 }
-                if (a[sortConfig.key] > b[sortConfig.key]) {
-                    return sortConfig.direction === 'asc' ? 1 : -1;
-                }
-                return 0;
-            });
-        } else if (viewMode === 'heatmap') {
-            data.sort((a,b) => b.marketCap - a.marketCap);
+            }
         }
 
-        return data;
-    }, [marketData, activeTab, searchQuery, sortConfig, viewMode]);
+        return sortedData;
+    }, [stocksWithMetrics, searchQuery, sortConfig, viewMode, activeTab]);
 
     const TABS: { key: MarketListType; label: string }[] = [
         { key: 'active', label: 'Most Active' },
@@ -180,10 +183,7 @@ const MarketsPage: React.FC<{
                             key={tab.key}
                             label={tab.label}
                             active={activeTab === tab.key}
-                            onClick={() => {
-                                setActiveTab(tab.key);
-                                setSortConfig(viewMode === 'table' ? { key: 'marketCap', direction: 'desc'} : null);
-                            }}
+                            onClick={() => setActiveTab(tab.key)}
                         />
                     ))}
                 </nav>
@@ -196,14 +196,14 @@ const MarketsPage: React.FC<{
              <div className="bg-gray-800 rounded-md border border-gray-700">
                 {viewMode === 'table' ? (
                     <StockMarketTable
-                        stocks={sortedAndFilteredData}
+                        stocks={displayData}
                         onSelectStock={onSelectStock}
                         sortConfig={sortConfig}
                         onSort={handleSort}
                     />
                 ) : (
                     <MarketHeatmap
-                        stocks={sortedAndFilteredData}
+                        stocks={displayData}
                         onSelectStock={onSelectStock}
                     />
                 )}

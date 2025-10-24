@@ -1,474 +1,181 @@
-import { ActiveEvent, SimulationState, Stock, Region, LearningToken } from '../types';
+import { ActiveEvent, SimulationState, MicroLLM } from '../types';
 
-// This file contains a bespoke, from-scratch MicroLLM (Large Language Model).
-// It implements the core architectural principles of a modern Transformer model,
-// including embeddings, positional encoding, multi-head attention, and feed-forward networks.
-// It is self-contained, runs entirely in the browser, composes articles
-// token-by-token, and learns from market feedback via reinforcement.
+export type Article = { headline: string; summary: string; fullText: string };
+export type GenerationResult = { article: Article; generatedText: string };
 
+// This corpus simulates the data a character-level LLM would be trained on.
+// It is written in a style mimicking financial news sources like AP, CNN, and Google News.
+const TRAINING_CORPUS = `
+Innovate Corp (INNV) saw its stock price surge by over 15% today following the announcement of its new AI platform, "Odyssey." Analysts suggest this breakthrough could disrupt the entire technology sector. The company's CEO stated, "Odyssey represents a quantum leap in machine learning capabilities, and we are confident in its potential to drive significant long-term growth." Trading volume for INNV was five times the daily average, reflecting strong investor optimism.
+Meanwhile, the broader market faced headwinds as the Federal Reserve signaled a potential interest rate hike. The market index dropped 0.8% on the news. HealthSphere (HLTH) shares tumbled after their flagship drug failed its Phase III clinical trials, raising concerns about the company's future revenue pipeline. The FDA's decision was unexpected and sent shockwaves through the health sector.
+In energy news, Solaris Energy (SOLR) secured a major government contract to build a new solar farm, boosting its stock price. Conversely, Petro-Global (PTRL) is under scrutiny for an environmental issue at one of its refineries. Regulators are investigating the incident, which could lead to significant fines.
+FinEx Solutions (FINX) reported better-than-expected quarterly earnings, driven by the strong performance of its new fintech payment network. The report indicates robust growth in user adoption and transaction volume. This positive development comes amid growing competition in the financial technology space.
+Geopolitical tensions in Asia are creating uncertainty. A new trade agreement is being negotiated, but its outcome remains unclear, impacting global supply chains. The industrials sector, particularly companies like Global Shipping (SHIP), is watching the situation closely. Any disruption could have widespread economic consequences.
+In technology, Quantum Leap (QUAN) announced a strategic partnership with CyberSec Corp (CYBR) to develop next-generation security protocols for quantum computing. This alliance aims to address emerging threats in the digital landscape. The collaboration is seen as a proactive move by both companies.
+The market is also reacting to a new set of regulations targeting the tech industry's data privacy practices. Companies like DataMine Inc. (DATA) may face increased compliance costs. An analyst commented, "While these regulations aim to protect consumers, they could also stifle innovation if implemented too broadly."
+BioFuture Labs (BIOF) unveiled promising results from its early-stage gene therapy research. While still years from commercialization, the news generated positive buzz among investors focused on long-term biotechnology plays.
+A surprise political scandal has erupted, causing market jitters. The full impact is yet to be seen, but investor confidence has been shaken. Market volatility is expected to remain high in the coming days as more details emerge. The situation is developing rapidly.
+The global economy shows signs of a slowdown. Key economic indicators suggest a cooling period after months of rapid expansion. This has led to a sell-off in cyclical stocks. Investors are shifting capital towards more defensive assets.
+DroneWorks (DRON) is launching a new line of autonomous drones for agricultural use, which could revolutionize farming efficiency. The product launch is scheduled for next quarter. AgriGrow (AGRI) is a potential major customer.
+A major hurricane is forming, threatening energy infrastructure along the coast. This has caused a spike in energy futures. Companies are activating their disaster preparedness plans. The storm's path will be critical.
+Vertex Realty (VRTX) is expanding its portfolio by acquiring several commercial properties. The real estate market has been stable, and this move signals confidence in its continued strength.
+GameSphere (GAME) faces a lawsuit over its in-game monetization practices. The legal challenge could set a precedent for the entire gaming industry. The outcome is being watched closely by competitors and regulators alike.
+The initial public offering of CloudCore Inc. (CLD) was a massive success, with shares soaring 40% above the initial offering price on the first day of trading. The IPO was one of the most anticipated of the year in the tech sector, reflecting strong demand for cloud computing services.
+An analyst downgrade sent shares of Software Solutions (SFTW) tumbling by 8%. The report from a prominent investment bank cited concerns over slowing user growth and increased competition from emerging rivals. The company has not yet responded to the downgrade, which wiped over $5 billion from its market capitalization.
+Global markets are on edge as central banks around the world contemplate their next move on interest rates to combat persistent inflation. The uncertainty has led to increased volatility in currency and bond markets, with investors seeking safe-haven assets.
+AeroDynamics (AERO) won a landmark defense contract worth an estimated $10 billion over five years. The contract involves the production of next-generation aircraft components. This is a significant victory for the company, securing a stable revenue stream and bolstering its position in the aerospace industry.
+A widespread cyberattack has disrupted services for several major financial institutions, including Nexus Capital (NEXS) and Legacy Bank (LGCY). The source of the attack is unknown, but it has highlighted vulnerabilities in the sector's digital infrastructure. Services are slowly being restored.
+Genomics PLC (GENE) received a "fast track" designation from the FDA for its novel cancer therapy. This designation will expedite the review process and could bring the treatment to market sooner than anticipated. The company's stock rallied on the news.
+A sudden diplomatic thaw between two rival nations has eased long-standing geopolitical tensions, boosting investor confidence globally. Markets in Europe and Asia saw significant gains, with the industrial and financial sectors leading the rally. The development is expected to have positive long-term economic implications.
+A severe drought in key agricultural regions is expected to lead to a global food shortage, according to a report from an international agency. The warning has caused a sharp increase in commodity prices and has put pressure on companies like AgriGrow (AGRI).
+PaySphere (PAY) is under investigation for anti-competitive practices related to its digital wallet service. The probe, launched by regulators, will examine whether the company unfairly disadvantages rivals on its platform.
+In a surprise move, the CEO of TechGen Inc. (TECH) has announced their resignation, effective immediately. The board has appointed an interim CEO while it conducts a search for a permanent replacement. The unexpected leadership change has created uncertainty about the company's strategic direction.
+The electric vehicle market is heating up as AutoDrive Systems (AUTO) unveils its new long-range battery technology. The innovation could give it a significant edge over competitors. The company plans to integrate the new batteries into its next line of vehicles.
+A merger between two major players in the health insurance industry, InsuranTech (INSR) and a competitor, has been blocked by regulators over monopoly concerns. The decision is a major blow to both companies, which had expected the deal to create significant synergies.
+`;
 
-// --- 1. Vocabulary and Tokenization (Simplified) ---
-export enum TokenType {
-    // Control Tokens
-    START_OF_SEQUENCE, END_OF_SEQUENCE,
-    // Subjects
-    SUBJECT_COMPANY, SUBJECT_MARKET, SUBJECT_SECTOR, SUBJECT_REGION, SUBJECT_REGULATORS, SUBJECT_ANALYSTS,
-    // Verbs (Sentiment-driven)
-    VERB_POS, VERB_NEG, VERB_NEUTRAL, VERB_SPECULATE, VERB_MERGER,
-    // Objects & Concepts
-    OBJECT_INNOVATION, OBJECT_POSITIVE_FINANCIALS,
-    OBJECT_NEGATIVE_EVENT, OBJECT_ECONOMIC_HEADWINDS,
-    OBJECT_UPDATE, OBJECT_POLITICAL_TENSION, OBJECT_DISASTER, OBJECT_INFLATION, OBJECT_INTEREST_RATES, OBJECT_REGULATORY_SCRUTINY,
-    // Connectors
-    CONJUNCTION_CAUSE, CONJUNCTION_RESULT, PREPOSITION,
-    // Adjectives
-    ADJECTIVE_POS, ADJECTIVE_NEG,
-    // Contextual Descriptors
-    CONTEXT_BULLISH, CONTEXT_BEARISH, CONTEXT_VOLATILE_MARKET,
-    // Details & Data
-    DATA_PRICE_CHANGE, DATA_MARKET_IMPACT, DATA_SECTOR_PERFORMANCE, DATA_52_WEEK_RANGE, DATA_VOLATILITY,
-    // Analysis
-    ANALYST_QUOTE_POS, ANALYST_QUOTE_NEG, ANALyst_QUOTE_NEUTRAL,
-    OUTLOOK_POS, OUTLOOK_NEG, OUTLOOK_NEUTRAL,
-    // Punctuation
-    PUNCTUATION_COMMA, PUNCTUATION_PERIOD,
-}
+const MARKOV_ORDER = 6; // How many characters the model looks back on. Higher order = more coherence, but needs more data.
 
-type Article = { headline: string; summary: string; fullText: string };
-type GenerationContext = {
-    subjectStock: Stock | null;
-    companyName: string;
-    symbol: string;
-    sector: string;
-    region: Region | 'Global';
-    sentiment: 'positive' | 'negative' | 'neutral';
-    magnitude: number; // 0 to 1, how strong is the event
-    event: ActiveEvent;
-    state: SimulationState;
+export const createMicroLLM = (): MicroLLM => {
+    const transitionTable: Record<string, Record<string, number>> = {};
+    const corpus = TRAINING_CORPUS;
+
+    for (let i = 0; i < corpus.length - MARKOV_ORDER; i++) {
+        const gram = corpus.substring(i, i + MARKOV_ORDER);
+        const nextChar = corpus.charAt(i + MARKOV_ORDER);
+        
+        if (!transitionTable[gram]) {
+            transitionTable[gram] = {};
+        }
+        if (!transitionTable[gram][nextChar]) {
+            transitionTable[gram][nextChar] = 0;
+        }
+        transitionTable[gram][nextChar]++;
+    }
+    return { transitionTable, order: MARKOV_ORDER };
 };
 
-// --- Helper Functions for Linear Algebra ---
-const dot = (a: number[], b: number[]): number => a.reduce((sum, val, i) => sum + val * b[i], 0);
-const add = (a: number[], b: number[]): number[] => a.map((val, i) => val + b[i]);
-const scale = (a: number[], s: number): number[] => a.map(val => val * s);
-const dropout = (x: number[], rate: number): number[] => {
-    if (rate === 0) return x;
-    return x.map(val => (Math.random() > rate ? val : 0));
+const selectNextChar = (possibilities: Record<string, number>): string => {
+    const totalWeight = Object.values(possibilities).reduce((sum, weight) => sum + weight, 0);
+    let random = Math.random() * totalWeight;
+
+    for (const char in possibilities) {
+        random -= possibilities[char];
+        if (random <= 0) {
+            return char;
+        }
+    }
+    return Object.keys(possibilities)[0]; // Fallback
+};
+
+export const learnFromArticleOutcome = (llm: MicroLLM, generatedText: string, outcome: number): MicroLLM => {
+    const newLLM = { ...llm }; // Shallow copy
+    const boostFactor = outcome > 1.0 ? 1.01 : 0.99; // Subtle boost or suppression
+
+    for (let i = 0; i < generatedText.length - newLLM.order; i++) {
+        const gram = generatedText.substring(i, i + newLLM.order);
+        const nextChar = generatedText.charAt(i + newLLM.order);
+
+        if (newLLM.transitionTable[gram] && newLLM.transitionTable[gram][nextChar]) {
+            // Adjust the weight of the transition that was used
+            const newWeight = newLLM.transitionTable[gram][nextChar] * boostFactor;
+            // Prevent weights from becoming zero or exploding
+            newLLM.transitionTable[gram][nextChar] = Math.max(0.1, newWeight);
+        }
+    }
+    return newLLM;
+};
+
+/**
+ * Simulates the LLM "training" on its own corpus during idle time to reinforce correct language structures.
+ */
+export const refineLLMWithCorpus = (llm: MicroLLM): MicroLLM => {
+    const newLLM = { ...llm };
+    const reinforcementFactor = 1.001; // A very subtle positive reinforcement
+    const chunkSize = 500; // Process a small chunk of the corpus at a time to simulate continuous learning
+
+    // Select a random starting point in the corpus to "read" from
+    const start = Math.floor(Math.random() * (TRAINING_CORPUS.length - chunkSize));
+    const corpusChunk = TRAINING_CORPUS.substring(start, start + chunkSize);
+
+    for (let i = 0; i < corpusChunk.length - newLLM.order; i++) {
+        const gram = corpusChunk.substring(i, i + newLLM.order);
+        const nextChar = corpusChunk.charAt(i + newLLM.order);
+
+        if (newLLM.transitionTable[gram] && newLLM.transitionTable[gram][nextChar]) {
+            // Reinforce existing, valid transitions found in the training data
+            newLLM.transitionTable[gram][nextChar] *= reinforcementFactor;
+        }
+    }
+    return newLLM;
 };
 
 
-// --- 2. Core Transformer Components ---
+export const generateNewsArticle = (event: ActiveEvent, state: SimulationState): GenerationResult => {
+    const { microLLM } = state;
+    const { transitionTable, order } = microLLM;
+    const stock = event.stockSymbol ? state.stocks.find(s => s.symbol === event.stockSymbol) : null;
 
-class LayerNorm {
-    private gain: number[];
-    private bias: number[];
-    constructor(private size: number, private epsilon = 1e-5) {
-        this.gain = new Array(size).fill(1);
-        this.bias = new Array(size).fill(0);
+    // Create a seed phrase based on the event to guide the generation
+    let seed = '';
+    if (stock) {
+        seed += `${stock.name} (${stock.symbol}) `;
+    } else {
+        seed += `The global market `;
     }
-    forward(x: number[]): number[] {
-        const mean = x.reduce((a, b) => a + b, 0) / this.size;
-        const variance = x.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / this.size;
-        const std = Math.sqrt(variance + this.epsilon);
-        return x.map((val, i) => this.gain[i] * (val - mean) / std + this.bias[i]);
-    }
-}
+    if (event.type === 'positive') seed += 'stock surged';
+    if (event.type === 'negative') seed += 'is facing headwinds';
+    if (event.type === 'split') seed += 'announced a stock split';
+    if (event.type === 'merger') seed += 'is acquiring a rival';
+    if (event.type === 'alliance') seed += 'formed a strategic alliance';
 
-class MultiHeadAttention {
-    private wq: number[][][]; // Head -> Dim -> Dim
-    private wk: number[][][];
-    private wv: number[][][];
-    private wo: number[][]; // Dim -> Dim
+    seed = seed.padEnd(order + 1); // Ensure seed is long enough
 
-    constructor(private embeddingDim: number, private numHeads: number) {
-        const headDim = embeddingDim / numHeads;
-        if (embeddingDim % numHeads !== 0) {
-            throw new Error("Embedding dimension must be divisible by number of heads.");
-        }
-        this.wq = Array.from({ length: numHeads }, () => this.xavierInit(embeddingDim, headDim));
-        this.wk = Array.from({ length: numHeads }, () => this.xavierInit(embeddingDim, headDim));
-        this.wv = Array.from({ length: numHeads }, () => this.xavierInit(embeddingDim, headDim));
-        this.wo = this.xavierInit(embeddingDim, embeddingDim);
-    }
-    
-    private xavierInit(fanIn: number, fanOut: number): number[][] {
-        const limit = Math.sqrt(6 / (fanIn + fanOut));
-        return Array.from({ length: fanOut }, () => Array.from({ length: fanIn }, () => (Math.random() * 2 - 1) * limit));
-    }
+    let currentGram = seed.substring(seed.length - order);
+    let resultText = seed;
+    const targetLength = 500 + Math.floor(Math.random() * 300);
 
-    private scaledDotProductAttention(q: number[][], k: number[][], v: number[][]): number[][] {
-        const d_k = q[0].length;
-        const scores = q.map(q_i => k.map(k_j => dot(q_i, k_j) / Math.sqrt(d_k)));
-        const attentionWeights = scores.map(row => {
-            const max = Math.max(...row);
-            const exps = row.map(s => Math.exp(s - max));
-            const sum = exps.reduce((a, b) => a + b, 0);
-            return exps.map(e => e / (sum || 1));
-        });
-        return attentionWeights.map(weights => v[0].map((_, i) => weights.reduce((sum, w, j) => sum + w * v[j][i], 0)));
-    }
-    
-    forward(sequence: number[][]): number[][] {
-        const heads = Array.from({ length: this.numHeads }).map((_, h) => {
-            const q = sequence.map(vec => this.wq[h].map(weights => dot(vec, weights)));
-            const k = sequence.map(vec => this.wk[h].map(weights => dot(vec, weights)));
-            const v = sequence.map(vec => this.wv[h].map(weights => dot(vec, weights)));
-            return this.scaledDotProductAttention(q, k, v);
-        });
-
-        const concatenated = sequence.map((_, i) => heads.flatMap(h => h[i]));
-        return concatenated.map(vec => this.wo.map(weights => dot(vec, weights)));
-    }
-}
-
-class FeedForwardLayer {
-    private w1: number[][];
-    private b1: number[];
-    private w2: number[][];
-    private b2: number[];
-
-    constructor(private embeddingDim: number, private ffDim: number) {
-        this.w1 = this.xavierInit(embeddingDim, ffDim);
-        this.b1 = new Array(ffDim).fill(0);
-        this.w2 = this.xavierInit(ffDim, embeddingDim);
-        this.b2 = new Array(embeddingDim).fill(0);
-    }
-
-    private xavierInit(fanIn: number, fanOut: number): number[][] {
-        const limit = Math.sqrt(6 / (fanIn + fanOut));
-        return Array.from({ length: fanOut }, () => Array.from({ length: fanIn }, () => (Math.random() * 2 - 1) * limit));
-    }
-    
-    // Using GELU approximation for a smoother activation than ReLU
-    private gelu(x: number): number {
-        return 0.5 * x * (1 + Math.tanh(Math.sqrt(2 / Math.PI) * (x + 0.044715 * Math.pow(x, 3))));
-    }
-
-    forward(x: number[]): number[] {
-        const hidden = this.w1.map((weights, i) => this.gelu(dot(x, weights) + this.b1[i]));
-        const output = this.w2.map((weights, i) => dot(hidden, weights) + this.b2[i]);
-        return output;
-    }
-}
-
-class TransformerLayer {
-    private attention: MultiHeadAttention;
-    private ff: FeedForwardLayer;
-    private norm1: LayerNorm;
-    private norm2: LayerNorm;
-    private dropoutRate: number;
-
-    constructor(private embeddingDim: number, private numHeads: number, ffDim: number, dropoutRate: number = 0.1) {
-        this.attention = new MultiHeadAttention(embeddingDim, numHeads);
-        this.ff = new FeedForwardLayer(embeddingDim, ffDim);
-        this.norm1 = new LayerNorm(embeddingDim);
-        this.norm2 = new LayerNorm(embeddingDim);
-        this.dropoutRate = dropoutRate;
-    }
-
-    forward(sequence: number[][]): number[][] {
-        // Pre-Layer Normalization architecture
-        const norm1_out = sequence.map(vec => this.norm1.forward(vec));
-        let attentionOutput = this.attention.forward(norm1_out);
-        attentionOutput = attentionOutput.map(vec => dropout(vec, this.dropoutRate));
-        const residual1 = sequence.map((vec, i) => add(vec, attentionOutput[i]));
-
-        const norm2_out = residual1.map(vec => this.norm2.forward(vec));
-        let ffOutput = norm2_out.map(vec => this.ff.forward(vec));
-        ffOutput = ffOutput.map(vec => dropout(vec, this.dropoutRate));
-        return residual1.map((vec, i) => add(vec, ffOutput[i]));
-    }
-}
-
-// --- 3. The MicroLLM Class ---
-class MicroLLM {
-    private embeddingDim = 64; 
-    private maxSeqLen = 120; // Increased capacity for longer articles
-    private vocabulary: TokenType[];
-    private embeddings: Map<TokenType, number[]>;
-    private contextFeatureEmbeddings: Map<string, number[]>;
-    private positionalEncoding: number[][];
-    private transformerLayers: TransformerLayer[];
-    private outputProjection: number[][];
-    private finalNorm: LayerNorm;
-    private learningRate = 0.005;
-
-    constructor(numLayers = 4, numHeads = 8) {
-        this.vocabulary = Object.values(TokenType).filter(v => typeof v === 'number') as TokenType[];
-        this.embeddings = this.createEmbeddings();
-        this.contextFeatureEmbeddings = this.createContextFeatureEmbeddings();
-        this.positionalEncoding = this.createPositionalEncoding();
-        this.transformerLayers = Array.from({length: numLayers}, () => new TransformerLayer(this.embeddingDim, numHeads, this.embeddingDim * 4, 0.1));
-        this.finalNorm = new LayerNorm(this.embeddingDim);
-        this.outputProjection = this.xavierInit(this.embeddingDim, this.vocabulary.length);
-    }
-    
-    private xavierInit(fanIn: number, fanOut: number): number[][] {
-        const limit = Math.sqrt(6 / (fanIn + fanOut));
-        return Array.from({ length: fanOut }, () => Array.from({ length: fanIn }, () => (Math.random() * 2 - 1) * limit));
-    }
-
-    private createEmbeddings(): Map<TokenType, number[]> {
-        const embeddings = new Map<TokenType, number[]>();
-        this.vocabulary.forEach(token => {
-            embeddings.set(token, Array.from({ length: this.embeddingDim }, () => Math.random() * 2 - 1));
-        });
-        return embeddings;
-    }
-    
-    private createContextFeatureEmbeddings(): Map<string, number[]> {
-        const features = [
-            'sentiment_positive', 'sentiment_negative', 'sentiment_neutral',
-            'type_positive', 'type_negative', 'type_neutral', 'type_split', 'type_merger', 'type_alliance', 'type_political', 'type_disaster',
-            'region_North America', 'region_Europe', 'region_Asia', 'region_Global'
-        ];
-        const embeddings = new Map<string, number[]>();
-        features.forEach(feature => {
-            embeddings.set(feature, Array.from({ length: this.embeddingDim }, () => Math.random() * 2 - 1));
-        });
-        return embeddings;
-    }
-
-    private createPositionalEncoding(): number[][] {
-        const pe: number[][] = [];
-        for (let pos = 0; pos < this.maxSeqLen + 1; pos++) { // +1 for context vector
-            const peRow: number[] = [];
-            for (let i = 0; i < this.embeddingDim; i++) {
-                if (i % 2 === 0) {
-                    peRow.push(Math.sin(pos / Math.pow(10000, i / this.embeddingDim)));
-                } else {
-                    peRow.push(Math.cos(pos / Math.pow(10000, (i - 1) / this.embeddingDim)));
-                }
-            }
-            pe.push(peRow);
-        }
-        return pe;
-    }
-    
-    private createAndEmbedContext(context: GenerationContext): number[] {
-        const sentimentFeature = `sentiment_${context.sentiment}`;
-        const typeFeature = `type_${context.event.type}`;
-        const regionFeature = `region_${context.region}`;
-
-        const sentimentEmb = this.contextFeatureEmbeddings.get(sentimentFeature) || new Array(this.embeddingDim).fill(0);
-        const typeEmb = this.contextFeatureEmbeddings.get(typeFeature) || new Array(this.embeddingDim).fill(0);
-        const regionEmb = this.contextFeatureEmbeddings.get(regionFeature) || new Array(this.embeddingDim).fill(0);
-        
-        let combined = add(add(sentimentEmb, typeEmb), regionEmb);
-        combined = scale(combined, 1/3); // average
-        combined = scale(combined, 1 + context.magnitude); // Weight by importance
-        
-        return combined;
-    }
-
-    private getContext(event: ActiveEvent, state: SimulationState): GenerationContext {
-        const subjectStock = event.stockSymbol ? state.stocks.find(s => s.symbol === event.stockSymbol) : null;
-        let sentiment: 'positive' | 'negative' | 'neutral' = 'neutral';
-        if (['positive', 'split', 'merger', 'alliance'].includes(event.type)) sentiment = 'positive';
-        if (['negative', 'disaster', 'political'].includes(event.type) && event.impact && (typeof event.impact === 'number' ? event.impact < 1 : true)) sentiment = 'negative';
-        
-        const getMagnitude = () => {
-             if (typeof event.impact === 'number') return Math.min(1, Math.abs(event.impact - 1) * 10);
-             return 0.5;
-        }
-
-        return {
-            subjectStock,
-            companyName: event.stockName || (subjectStock ? subjectStock.name : 'The Market'),
-            symbol: subjectStock?.symbol || 'MARKET',
-            sector: subjectStock?.sector || 'Global Economy',
-            region: subjectStock?.region || 'Global',
-            sentiment,
-            magnitude: getMagnitude(),
-            event,
-            state,
-        };
-    }
-
-    private decode(logits: number[], previousTokens: TokenType[], temperature: number, top_p: number, repetition_penalty: number): TokenType {
-        // 1. Apply repetition penalty
-        const penalizedLogits = [...logits];
-        const tokenSet = new Set(previousTokens.slice(-20)); 
-        tokenSet.forEach(tokenType => {
-            const index = this.vocabulary.indexOf(tokenType);
-            if (index !== -1) {
-                if (penalizedLogits[index] > 0) penalizedLogits[index] /= repetition_penalty;
-                else penalizedLogits[index] *= repetition_penalty;
-            }
-        });
-
-        // 2. Prepare for Top-P sampling
-        const indexedLogits = penalizedLogits.map((logit, index) => ({ logit, index }));
-        indexedLogits.sort((a, b) => b.logit - a.logit);
-
-        // 3. Apply temperature and calculate probabilities (softmax)
-        const scaledLogits = indexedLogits.map(item => item.logit / temperature);
-        const maxLogit = scaledLogits[0] || 0;
-        const exps = scaledLogits.map(l => Math.exp(l - maxLogit));
-        const sumExps = exps.reduce((a, b) => a + b, 0);
-        const probs = exps.map((e, i) => ({ prob: e / (sumExps || 1), index: indexedLogits[i].index }));
-
-        // 4. Filter with Top-P (Nucleus)
-        let cumulativeProb = 0;
-        const nucleus = [];
-        for (const probItem of probs) {
-            nucleus.push(probItem);
-            cumulativeProb += probItem.prob;
-            if (cumulativeProb >= top_p) break;
-        }
-        if (nucleus.length === 0 && probs.length > 0) nucleus.push(probs[0]);
-
-
-        // 5. Sample from the nucleus
-        const nucleusSum = nucleus.reduce((a, b) => a + b.prob, 0);
-        const normalizedNucleus = nucleus.map(item => ({...item, prob: item.prob / (nucleusSum || 1)}));
-
-        const rand = Math.random();
-        let sampleCumulativeProb = 0;
-        for (const item of normalizedNucleus) {
-            sampleCumulativeProb += item.prob;
-            if (rand < sampleCumulativeProb) {
-                return this.vocabulary[item.index];
-            }
+    for (let i = 0; i < targetLength; i++) {
+        const possibilities = transitionTable[currentGram];
+        if (!possibilities) {
+            // If we hit a dead end, break or find a random starting point
+            const randomKeys = Object.keys(transitionTable);
+            currentGram = randomKeys[Math.floor(Math.random() * randomKeys.length)];
+            continue;
         }
         
-        return this.vocabulary[nucleus[0]?.index] || TokenType.END_OF_SEQUENCE;
+        const nextChar = selectNextChar(possibilities);
+        resultText += nextChar;
+        currentGram = resultText.substring(resultText.length - order);
     }
     
-    private detokenize(tokens: TokenType[], context: GenerationContext): string {
-        const textMap: Record<number, () => string> = {
-            // Subjects
-            [TokenType.SUBJECT_COMPANY]: () => this.pick([`Shares of ${context.companyName}`, `${context.companyName} (${context.symbol})`, `The ${context.sector} firm`, `${context.companyName}`]),
-            [TokenType.SUBJECT_MARKET]: () => this.pick(["The broader market", "Investor sentiment", "The global economy", "Wall Street"]),
-            [TokenType.SUBJECT_SECTOR]: () => `The ${context.sector} sector`,
-            [TokenType.SUBJECT_REGION]: () => `${context.region} markets`,
-            [TokenType.SUBJECT_REGULATORS]: () => this.pick(["Regulators", "Government agencies", "A key oversight committee"]),
-            [TokenType.SUBJECT_ANALYSTS]: () => this.pick(["Analysts", "Market watchers", "Investment experts"]),
-            // Verbs
-            [TokenType.VERB_POS]: () => context.magnitude > 0.5 ? this.pick(["skyrocketed", "surged", "rallied", "jumped"]) : this.pick(["climbed", "rose", "edged higher"]),
-            [TokenType.VERB_NEG]: () => context.magnitude > 0.5 ? this.pick(["plummeted", "cratered", "was hammered"]) : this.pick(["slumped", "faced headwinds", "retreated"]),
-            [TokenType.VERB_NEUTRAL]: () => this.pick(["reported", "saw", "experienced", "remained steady"]),
-            [TokenType.VERB_SPECULATE]: () => this.pick(["are speculating", "are closely watching", "are debating the impact of"]),
-            [TokenType.VERB_MERGER]: () => `announced its acquisition of ${context.event.mergerDetails?.acquired || 'a rival'}`,
-            // Objects
-            [TokenType.OBJECT_INNOVATION]: () => this.pick(["a significant technological breakthrough", "its promising innovation pipeline"]),
-            [TokenType.OBJECT_POSITIVE_FINANCIALS]: () => this.pick(["better-than-expected quarterly earnings", `a major strategic deal`, "an upgrade from a prominent analyst"]),
-            [TokenType.OBJECT_NEGATIVE_EVENT]: () => this.pick(["a stunning product failure", "a widespread corporate scandal", "a downgrade from a major ratings agency"]),
-            [TokenType.OBJECT_ECONOMIC_HEADWINDS]: () => this.pick(["growing fears of a recession", "ongoing supply chain disruptions"]),
-            [TokenType.OBJECT_UPDATE]: () => "a routine operational update",
-            [TokenType.OBJECT_POLITICAL_TENSION]: () => "rising geopolitical tensions",
-            [TokenType.OBJECT_DISASTER]: () => "a large-scale natural disaster",
-            [TokenType.OBJECT_INFLATION]: () => "persistent inflation concerns",
-            [TokenType.OBJECT_INTEREST_RATES]: () => "speculation about interest rate changes",
-            [TokenType.OBJECT_REGULATORY_SCRUTINY]: () => "increased regulatory scrutiny",
-            // Connectors & Adjectives
-            [TokenType.CONJUNCTION_CAUSE]: () => this.pick(["as", "following", "on the back of", "driven by"]),
-            [TokenType.CONJUNCTION_RESULT]: () => this.pick(["which", "leading to", "prompting", "sending shockwaves through"]),
-            [TokenType.PREPOSITION]: () => this.pick(["amid", "in response to", "despite"]),
-            [TokenType.ADJECTIVE_POS]: () => this.pick(["strong", "robust", "impressive"]),
-            [TokenType.ADJECTIVE_NEG]: () => this.pick(["weak", "disappointing", "lackluster"]),
-            // Context
-            [TokenType.CONTEXT_BULLISH]: () => "a generally bullish market sentiment",
-            [TokenType.CONTEXT_BEARISH]: () => "a backdrop of bearish market sentiment",
-            [TokenType.CONTEXT_VOLATILE_MARKET]: () => "a period of heightened market volatility",
-            // Data
-            [TokenType.DATA_PRICE_CHANGE]: () => {
-                if (!context.subjectStock) return "market volatility";
-                const { close } = context.subjectStock.history.slice(-1)[0];
-                const prevClose = context.subjectStock.history.slice(-2)[0].close;
-                const changePercent = ((close - prevClose) / prevClose * 100).toFixed(2);
-                return `to close at $${close.toFixed(2)}, a move of ${changePercent}% on the day`;
-            },
-            [TokenType.DATA_MARKET_IMPACT]: () => "spillover effects across the global economy",
-            [TokenType.DATA_SECTOR_PERFORMANCE]: () => `a rally in the broader ${context.sector} sector`,
-            [TokenType.DATA_52_WEEK_RANGE]: () => {
-                if (!context.subjectStock) return "";
-                const high = Math.max(...context.subjectStock.history.slice(-252).map(h => h.high));
-                return `approaching its 52-week high of $${high.toFixed(2)}`;
-            },
-            [TokenType.DATA_VOLATILITY]: () => "a spike in trading volume and volatility",
-            // Analysis
-            [TokenType.ANALYST_QUOTE_POS]: () => '"This is a clear and decisive move that demonstrates their market leadership," commented one analyst.',
-            [TokenType.ANALYST_QUOTE_NEG]: () => '"The situation is developing, but this is a major headwind for the company," stated a market expert.',
-            [TokenType.ANALyst_QUOTE_NEUTRAL]: () => '"This appears to be a non-event for the stock\'s long-term valuation," an analyst noted.',
-            [TokenType.OUTLOOK_POS]: () => "Looking ahead, the company appears well-positioned to capitalize on this momentum.",
-            [TokenType.OUTLOOK_NEG]: () => "The firm faces a challenging road to recovery, with uncertainty clouding its future.",
-            [TokenType.OUTLOOK_NEUTRAL]: () => "The outlook remains largely unchanged as investors digest the news.",
-            // Punctuation
-            [TokenType.PUNCTUATION_COMMA]: () => ",",
-            [TokenType.PUNCTUATION_PERIOD]: () => ".",
-        };
-
-        let text = tokens.map(t => textMap[t] ? textMap[t]() : '').join(' ');
-        text = text.replace(/\s,/g, ',').replace(/\s\./g, '.').replace(/ ,/g, ',').replace(/ \./g, '.');
-        return text.split('. ').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('. ');
+    // Clean up the generated text a bit
+    let cleanedText = resultText.trim();
+    const lastSentenceEnd = cleanedText.lastIndexOf('.');
+    if (lastSentenceEnd !== -1) {
+        cleanedText = cleanedText.substring(0, lastSentenceEnd + 1);
     }
 
-    private pick<T>(arr: T[]): T {
-        return arr[Math.floor(Math.random() * arr.length)];
-    }
-
-    public generate(event: ActiveEvent, state: SimulationState): { article: Article, learningTokens: LearningToken[] } {
-        const context = this.getContext(event, state);
-        const contextVector = this.createAndEmbedContext(context);
-        
-        const outputTokens: TokenType[] = [TokenType.START_OF_SEQUENCE];
-        const learningTokens: LearningToken[] = [];
-
-        for (let i = 0; i < this.maxSeqLen - 1; i++) {
-            if (outputTokens[outputTokens.length-1] === TokenType.END_OF_SEQUENCE || outputTokens.length >= this.maxSeqLen) break;
-
-            const tokenEmbeddings = outputTokens.map(t => this.embeddings.get(t)!);
-            let sequence = [contextVector, ...tokenEmbeddings];
-            
-            sequence = sequence.map((vec, pos) => add(vec, this.positionalEncoding[pos]));
-            
-            for (const layer of this.transformerLayers) {
-                sequence = layer.forward(sequence);
-            }
-
-            let lastVector = sequence[sequence.length - 1];
-            lastVector = this.finalNorm.forward(lastVector);
-            
-            const logits = this.outputProjection.map(weights => dot(lastVector, weights));
-            
-            const nextToken = this.decode(logits, outputTokens, 0.9, 0.95, 1.2);
-            outputTokens.push(nextToken);
-            
-            if (nextToken !== TokenType.END_OF_SEQUENCE) {
-                learningTokens.push({ token: nextToken, hiddenState: lastVector });
-            }
+    // Format into paragraphs (a simple heuristic)
+    const sentences = cleanedText.split('. ').map(s => s.trim());
+    let fullText = '';
+    let paragraph = '';
+    for (let i = 0; i < sentences.length; i++) {
+        paragraph += sentences[i] + '. ';
+        if ((i + 1) % 3 === 0) {
+            fullText += paragraph.trim() + '\n\n';
+            paragraph = '';
         }
-        
-        const cleanTokens = outputTokens.filter(t => t !== TokenType.START_OF_SEQUENCE && t !== TokenType.END_OF_SEQUENCE);
-        const fullText = this.detokenize(cleanTokens, context);
-        const headline = event.eventName;
-        const summary = fullText.split('. ')[0] + '.';
-
-        return { article: { headline, summary, fullText }, learningTokens };
     }
+    if (paragraph) fullText += paragraph.trim();
 
-    public learn(trackedTokens: LearningToken[], outcome: number): void {
-        // This simulates a policy gradient update on the final layer.
-        // It reinforces the weights that led to the chosen tokens based on the market's reaction (outcome).
-        if (!Array.isArray(trackedTokens)) return;
-        
-        trackedTokens.forEach(({ token, hiddenState }) => {
-            if (token === undefined || !hiddenState) return;
+    const summary = sentences.slice(0, 2).join('. ') + '.';
 
-            const tokenIndex = this.vocabulary.indexOf(token);
-            if (tokenIndex === -1) return;
+    const article: Article = {
+        headline: event.eventName,
+        summary,
+        fullText: fullText.trim(),
+    };
 
-            const gradient = hiddenState;
-            const update = scale(gradient, this.learningRate * outcome);
-
-            this.outputProjection[tokenIndex] = add(this.outputProjection[tokenIndex], update);
-        });
-    }
-}
-
-export const newsGeneratorAI = new MicroLLM();
-
-export const generateNewsArticle = (event: ActiveEvent, state: SimulationState): { article: Article, learningTokens: LearningToken[] } => {
-    return newsGeneratorAI.generate(event, state);
+    return { article, generatedText: cleanedText };
 };
