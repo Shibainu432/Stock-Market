@@ -1,3 +1,4 @@
+
 // This file simulates a neural network for image generation, trained on a vast corpus of financial articles and images.
 // It uses a knowledge base of keyword-to-icon/theme mappings to generate a relevant
 // and aesthetically pleasing image for each news event by searching online.
@@ -10,11 +11,9 @@ const KEYWORD_ASSOCIATIONS: Record<string, string> = {
     'chip': 'Technology', 'ai': 'Technology', 'software': 'Technology', 'cyber': 'Technology', 'data': 'Technology', 'cloud': 'Technology', 'quantum': 'Technology', 'internet': 'Technology', 'robotics': 'Technology', 'tech': 'Technology', 'digital': 'Technology', 'platform': 'Technology',
     'fda': 'Health', 'drug': 'Health', 'health': 'Health', 'medical': 'Health', 'pharma': 'Health', 'clinic': 'Health', 'genomics': 'Health', 'therapy': 'Health', 'vaccine': 'Health', 'hospital': 'Health', 'wellness': 'Health',
     'energy': 'Energy', 'solar': 'Energy', 'oil': 'Energy', 'efficiency': 'Energy', 'subsidy': 'Energy', 'hydro': 'Energy', 'wind': 'Energy', 'nuclear': 'Energy', 'battery': 'Energy', 'grid': 'Energy', 'carbon': 'Energy',
-// Fix: Removed duplicate 'finance' key.
     'finance': 'Finance', 'earnings': 'Finance', 'fintech': 'Finance', 'rate': 'Finance', 'rating': 'Finance', 'bank': 'Finance', 'insurance': 'Finance', 'lend': 'Finance', 'trade': 'Finance', 'invest': 'Finance', 'funds': 'Finance', 'ipo': 'Finance',
     'industrials': 'Industrials', 'contract': 'Industrials', 'supply': 'Industrials', 'factory': 'Industrials', 'logistics': 'Industrials', 'aero': 'Industrials', 'ship': 'Industrials', 'build': 'Industrials', 'auto': 'Industrials', 'rail': 'Industrials', 'manufacturing': 'Industrials', 'infrastructure': 'Industrials', 'commodity': 'Industrials',
     'global': 'macro', 'market': 'macro', 'economy': 'macro', 'macroeconomic': 'macro', 'world': 'macro',
-// Fix: Removed duplicate 'trade' key which conflicted with the one under Finance.
     'political': 'political', 'election': 'political', 'government': 'political', 'policy': 'political', 'regulations': 'political',
     'hurricane': 'disaster', 'earthquake': 'disaster', 'wildfires': 'disaster', 'natural': 'disaster', 'storm': 'disaster', 'famine': 'disaster',
     'routine': 'neutral', 'minor': 'neutral', 'update': 'update', 'reshuffle': 'neutral', 'meeting': 'neutral', 'stable': 'stability', 'engagement': 'neutral', 'renovation': 'neutral', 'renewal': 'neutral', 'personnel': 'neutral', 'audit': 'neutral', 'showcase': 'neutral', 'review': 'neutral', 'dialogue': 'neutral', 'adjustment': 'neutral',

@@ -1,3 +1,4 @@
+
 import { ActiveEvent, SimulationState, MicroLLM } from '../types';
 
 export type Article = { headline: string; summary: string; fullText: string };
@@ -70,14 +71,24 @@ const selectNextChar = (possibilities: Record<string, number>): string => {
 
 export const learnFromArticleOutcome = (llm: MicroLLM, generatedText: string, outcome: number): MicroLLM => {
     const newLLM = { ...llm }; // Shallow copy
-    const boostFactor = outcome > 1.0 ? 1.01 : 0.99; // Subtle boost or suppression
+
+    // Calculate performance relative to the market (outcome = 1.0 is neutral)
+    const performance = outcome - 1.0;
+
+    // Use tanh to scale the performance to a value between -1 and 1.
+    // The multiplier (e.g., 5) adjusts sensitivity. Higher values mean smaller market moves have a bigger impact on learning.
+    const scaledPerformance = Math.tanh(performance * 5);
+
+    // Define the maximum learning adjustment (e.g., 5% boost or suppression)
+    const maxAdjustment = 0.05;
+    const boostFactor = 1.0 + scaledPerformance * maxAdjustment;
 
     for (let i = 0; i < generatedText.length - newLLM.order; i++) {
         const gram = generatedText.substring(i, i + newLLM.order);
         const nextChar = generatedText.charAt(i + newLLM.order);
 
         if (newLLM.transitionTable[gram] && newLLM.transitionTable[gram][nextChar]) {
-            // Adjust the weight of the transition that was used
+            // Adjust the weight of the transition that was used based on the outcome
             const newWeight = newLLM.transitionTable[gram][nextChar] * boostFactor;
             // Prevent weights from becoming zero or exploding
             newLLM.transitionTable[gram][nextChar] = Math.max(0.1, newWeight);
@@ -85,6 +96,7 @@ export const learnFromArticleOutcome = (llm: MicroLLM, generatedText: string, ou
     }
     return newLLM;
 };
+
 
 /**
  * Simulates the LLM "training" on its own corpus during idle time to reinforce correct language structures.

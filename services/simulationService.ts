@@ -1,3 +1,4 @@
+
 import { SimulationState, Stock, Investor, SimplePriceDataPoint, PortfolioItem, ShareLot, ActiveEvent, HyperComplexInvestorStrategy, TrackedCorporateAction, OHLCDataPoint, Region, TrackedGeneratedArticle, RandomInvestorStrategy, MicroLLM } from '../types';
 import { STOCK_SYMBOLS, MIN_INITIAL_STOCK_PRICE, MAX_INITIAL_STOCK_PRICE, INITIAL_HISTORY_LENGTH, HUMAN_INITIAL_INVESTOR_CASH, AI_INITIAL_INVESTOR_CASH, buildInvestors, INFLATION_RATE, TAX_CONSTANTS, CORPORATE_EVENTS_BY_SECTOR, MACRO_EVENTS, WASHINGTON_B_AND_O_TAX_RATES_BY_SECTOR, MIN_CORPORATE_ACTION_INTERVAL, CORPORATE_ACTION_INTERVAL_RANGE, MIN_STOCK_SPLIT_PRICE, INDICATOR_NEURONS, CORPORATE_NEURONS } from '../constants';
 import { getImageForEvent } from './imageService';
@@ -131,7 +132,7 @@ const calculateIndicators = (stock: Stock, allStocks: Stock[], eventHistory: Act
 
     if(smas[10] && smas[20]) indicators['trend_sma_crossover_10_20'] = (smas[10] - smas[20]) / smas[20];
     if(smas[20] && smas[50]) indicators['trend_sma_crossover_20_50'] = (smas[20] - smas[50]) / smas[50];
-    if(smas[50] && smas[200]) indicators['trend_sma_crossover_50_200'] = (smas[50] - smas[200]) / smas[50];
+    if(smas[50] && smas[200]) indicators['trend_sma_crossover_50_200'] = (smas[50] - smas[200]) / smas[200];
     
     const calculateEMA = (data: number[], period: number) => {
         if(data.length < period) return null;
@@ -704,13 +705,18 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
         if (stock.history.length > INITIAL_HISTORY_LENGTH + 50) stock.history.shift();
     });
 
+    // An active event from the previous day is cleared if it was a macro event or neutral corporate event.
+    // Specific corporate events (like splits/mergers) might have lasting effects handled elsewhere,
+    // but the main news item is cleared here.
     if (state.activeEvent && (state.activeEvent.stockSymbol === null || state.activeEvent.type === 'neutral')) {
         state.activeEvent = null;
     }
 
+    // This object will accumulate all price-changing effects for the day.
     const dailyImpacts: Record<string, number> = {};
     state.stocks.forEach(s => dailyImpacts[s.symbol] = 1.0);
   
+    // Check if it's time for a new macroeconomic event.
     if (nextDay >= state.nextMacroEventDay) {
         const marketMomentum = state.marketIndexHistory.length > 50 
             ? (state.marketIndexHistory.slice(-1)[0].price / state.marketIndexHistory.slice(-51)[0].price) - 1
@@ -720,6 +726,7 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
         const isBearish = marketMomentum < -0.05;
         
         let possibleEvents = MACRO_EVENTS;
+        // Bias event selection based on market conditions.
         if (isBullish && Math.random() < 0.7) {
             possibleEvents = MACRO_EVENTS.filter(e => e.type === 'positive' || e.type === 'political');
         } else if (isBearish && Math.random() < 0.7) {
@@ -734,29 +741,34 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
         state.nextMacroEventDay = nextDay + 15 + Math.floor(Math.random() * 20);
     }
     
+    // Iterate through each stock to check for corporate-level events.
     for (const stock of state.stocks) {
         if (stock.isDelisted) continue;
         
         let actionTaken = false;
+        // Check if a corporate AI-driven action is scheduled.
         if (nextDay >= stock.corporateAI.nextCorporateActionDay) {
             const indicators = calculateCorporateIndicators(stock, state.stocks, state.marketIndexHistory, state.eventHistory);
             const indicatorValues = CORPORATE_NEURONS.map(name => indicators[name] || 0);
             const currentPrice = stock.history.slice(-1)[0].open;
             const currentMarketIndex = state.marketIndexHistory.slice(-1)[0].price;
   
+            // The corporate AI evaluates splitting the stock.
             const splitScore = stock.corporateAI.splitNN.feedForward(indicatorValues)[0];
             if (splitScore > 1.5 && currentPrice > MIN_STOCK_SPLIT_PRICE) {
                 actionTaken = true;
                 const ratio = Math.floor(currentPrice / 100) || 2;
-                const newEvent = addEventToHistory(state, { stockSymbol: stock.symbol, stockName: stock.name, eventName: `Announces ${ratio}-for-1 Stock Split`, description: `The board has approved a ${ratio}-for-1 stock split.`, type: 'split', splitDetails: { symbol: stock.symbol, ratio } }, [stock.sector, stock.name, 'split']);
-                if (Math.abs(1.0 - 1) > 0.05) state.activeEvent = newEvent;
+                addEventToHistory(state, { stockSymbol: stock.symbol, stockName: stock.name, eventName: `Announces ${ratio}-for-1 Stock Split`, description: `The board has approved a ${ratio}-for-1 stock split.`, type: 'split', splitDetails: { symbol: stock.symbol, ratio } }, [stock.sector, stock.name, 'split']);
+                // The split directly affects stock properties.
                 stock.sharesOutstanding *= ratio;
                 stock.history.forEach(h => { h.open /= ratio; h.high /= ratio; h.low /= ratio; h.close /= ratio; });
                 stock.eps /= ratio;
                 state.trackedCorporateActions.push({ startDay: nextDay, evaluationDay: nextDay + 60, stockSymbol: stock.symbol, actionType: 'split', indicatorValuesAtAction: indicatorValues, startingStockPrice: currentPrice / ratio, startingMarketIndex: currentMarketIndex });
             } else {
+                // The corporate AI evaluates forming an alliance.
                 const allianceScore = stock.corporateAI.allianceNN.feedForward(indicatorValues)[0];
                 if (allianceScore > 2.0) {
+                    // Find a suitable partner.
                     let partners = state.stocks.filter(s => s.region === stock.region && s.sector === stock.sector && s.symbol !== stock.symbol && !s.isDelisted);
                     if(partners.length === 0 || Math.random() > 0.9) partners = state.stocks.filter(s => s.sector === stock.sector && s.symbol !== stock.symbol && !s.isDelisted);
                     
@@ -769,9 +781,11 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
                         state.trackedCorporateActions.push({ startDay: nextDay, evaluationDay: nextDay + 90, stockSymbol: stock.symbol, actionType: 'alliance', indicatorValuesAtAction: indicatorValues, startingStockPrice: currentPrice, startingMarketIndex: currentMarketIndex });
                     }
                 } else {
+                    // The corporate AI evaluates acquiring another company.
                     const acquisitionScore = stock.corporateAI.acquisitionNN.feedForward(indicatorValues)[0];
                     if (acquisitionScore > 2.5) {
                         const stockMarketCap = currentPrice * stock.sharesOutstanding;
+                        // Find a suitable, smaller target company.
                         let targets = state.stocks.filter(s => s.region === stock.region && s.sector === stock.sector && s.symbol !== stock.symbol && !s.isDelisted && (s.history.slice(-1)[0].open * s.sharesOutstanding < stockMarketCap * 0.5));
                         if (targets.length === 0 || Math.random() > 0.9) targets = state.stocks.filter(s => s.sector === stock.sector && s.symbol !== stock.symbol && !s.isDelisted && (s.history.slice(-1)[0].open * s.sharesOutstanding < stockMarketCap * 0.5));
                        
@@ -780,7 +794,7 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
                             const target = targets[Math.floor(Math.random() * targets.length)];
                             addEventToHistory(state, { stockSymbol: stock.symbol, stockName: stock.name, eventName: `Acquires ${target.name}`, description: `An acquisition to consolidate market share.`, type: 'merger', mergerDetails: { acquiring: stock.symbol, acquired: target.symbol } }, [stock.sector, 'acquisition', target.name]);
                             dailyImpacts[stock.symbol] *= 1.05;
-                            dailyImpacts[target.symbol] *= 1.15;
+                            dailyImpacts[target.symbol] *= 1.15; // Target company stock pops before delisting.
                             state.trackedCorporateActions.push({ startDay: nextDay, evaluationDay: nextDay + 180, stockSymbol: stock.symbol, actionType: 'acquisition', indicatorValuesAtAction: indicatorValues, startingStockPrice: currentPrice, startingMarketIndex: currentMarketIndex });
                             const targetStock = state.stocks.find(s => s.symbol === target.symbol);
                             if (targetStock) targetStock.isDelisted = true;
@@ -788,9 +802,11 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
                     }
                 }
             }
+            // Schedule the next potential AI action.
             if(actionTaken) stock.corporateAI.nextCorporateActionDay = nextDay + MIN_CORPORATE_ACTION_INTERVAL + Math.floor(Math.random() * CORPORATE_ACTION_INTERVAL_RANGE);
         }
         
+        // If no major AI action was taken, there's a chance for a smaller, random corporate event.
         if (!actionTaken && Math.random() < 0.15) {
             const events = CORPORATE_EVENTS_BY_SECTOR[stock.sector];
             const eventType = Math.random() < 0.8 ? 'neutral' : (['positive', 'negative'] as const)[Math.floor(Math.random() * 2)];
@@ -802,32 +818,46 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
         }
     }
 
+    // After all events for the day have been determined, apply the impact of the main active event.
     if (state.activeEvent) {
-      const applyImpact = (stock: Stock) => {
-        if (typeof state.activeEvent?.impact === 'number') {
-            return state.activeEvent.impact;
-        } else if (typeof state.activeEvent?.impact === 'object' && state.activeEvent.impact) {
-            const regionalImpact = state.activeEvent.impact[stock.region];
-            if(regionalImpact !== undefined) return regionalImpact;
-            else {
-                const eventRegion = state.activeEvent.region;
-                if(eventRegion && eventRegion !== 'Global' && state.activeEvent.impact[eventRegion]) {
-                    const mainImpact = state.activeEvent.impact[eventRegion]!;
-                    return 1 + (mainImpact - 1) * 0.25;
+        // Helper function to parse complex, multi-layered event impacts.
+        const applyMacroImpact = (stock: Stock, event: ActiveEvent): number => {
+            if (typeof event.impact === 'number') {
+                return event.impact; // Simple global impact.
+            }
+            if (typeof event.impact === 'object' && event.impact) {
+                const impacts = event.impact as Record<string, number>;
+
+                // Priority of impact: Sector > Region > Default
+                if (impacts[stock.sector] !== undefined) return impacts[stock.sector];
+                if (impacts[stock.region] !== undefined) return impacts[stock.region];
+                if (impacts['default'] !== undefined) return impacts['default'];
+
+                // If it's a regional event, apply a dampened effect to other regions.
+                const eventRegion = event.region;
+                if (eventRegion && eventRegion !== 'Global' && impacts[eventRegion]) {
+                    const mainImpact = impacts[eventRegion];
+                    return 1 + (mainImpact - 1) * 0.25; // 25% of the impact spills over.
                 }
             }
-        }
-        return 1.0;
-      };
-
-      state.stocks.forEach(stock => {
-          if (!stock.isDelisted) {
-            const impact = applyImpact(stock);
-            const currentDayEntry = stock.history[stock.history.length - 1];
-            currentDayEntry.close *= impact;
-          }
-      });
+            return 1.0; // No impact.
+        };
+        
+        // Apply the calculated impact to each stock's daily impact multiplier.
+        state.stocks.forEach(stock => {
+            if (!stock.isDelisted) {
+                dailyImpacts[stock.symbol] *= applyMacroImpact(stock, state.activeEvent!);
+            }
+        });
     }
+
+    // Finally, apply all accumulated daily impacts (from macro and corporate events) to the stock prices.
+    state.stocks.forEach(stock => {
+        if (!stock.isDelisted && dailyImpacts[stock.symbol] !== 1.0) {
+            const currentDayEntry = stock.history[stock.history.length - 1];
+            currentDayEntry.close = Math.max(0.01, currentDayEntry.close * dailyImpacts[stock.symbol]);
+        }
+    });
 
     return state;
 }
