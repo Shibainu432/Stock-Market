@@ -82,6 +82,12 @@ export interface HyperComplexInvestorStrategy {
     learningRate: number;
 }
 
+// A new, simple AI that trades randomly to create market noise
+export interface RandomInvestorStrategy {
+    strategyType: 'random';
+    tradeChance: number; // e.g., 0.1 for 10% chance per stock per day
+}
+
 
 export interface PortfolioValueHistoryPoint {
     day: number;
@@ -122,7 +128,7 @@ export interface Investor {
   name: string;
   isHuman?: boolean;
   strategyName?: string;
-  strategy: InvestorStrategy | ComplexInvestorStrategy | HyperComplexInvestorStrategy;
+  strategy: InvestorStrategy | ComplexInvestorStrategy | HyperComplexInvestorStrategy | RandomInvestorStrategy;
   cash: number;
   portfolio: PortfolioItem[];
   portfolioHistory: PortfolioValueHistoryPoint[];
@@ -155,11 +161,17 @@ export interface TrackedNewsEvent {
     startingMarketIndex: number;
 }
 
+export interface LearningToken {
+    token: TokenType;
+    hiddenState: number[];
+}
+
 export interface TrackedGeneratedArticle {
     startDay: number;
     evaluationDay: number;
     startingMarketIndex: number;
-    generatedTokens: TokenType[];
+    generatedTokens: LearningToken[];
+    marketVolatility: number;
 }
 
 export interface SimulationState {

@@ -55,8 +55,8 @@ export class NeuralNetwork {
                     sum += activations[k] * weightMatrix[k][j];
                 }
                 sum += biasVector[j];
-                // Use tanh for hidden layers and a linear output for the final score
-                nextActivations[j] = (i === this.weights.length - 1) ? sum : tanh(sum);
+                // Apply tanh to all layers to get a normalized score between -1 and 1
+                nextActivations[j] = tanh(sum);
             }
             activations = nextActivations;
         }
@@ -79,7 +79,8 @@ export class NeuralNetwork {
                     sum += currentActivations[k] * weightMatrix[k][j];
                 }
                 sum += biasVector[j];
-                nextActivations[j] = (i === this.weights.length - 1) ? sum : tanh(sum);
+                // Apply tanh to all layers to be consistent with feedForward
+                nextActivations[j] = tanh(sum);
             }
             layerActivations.push(nextActivations);
             currentActivations = nextActivations;
@@ -94,17 +95,18 @@ export class NeuralNetwork {
             
             // Calculate gradients for the current layer
             const gradients = currentLayerOutputs.map((output, j) => {
-                // The derivative for the linear output layer is 1
-                const derivative = (i === this.weights.length - 1) ? 1 : dtanh(output);
+                // ALL layers now use tanh, so the derivative is always dtanh(output)
+                const derivative = dtanh(output);
                 return errors[j] * derivative;
             });
             
             // Calculate errors for the previous (next in backward pass) layer
             const nextErrors = new Array(prevActivations.length).fill(0);
-            for (let j = 0; j < prevActivations.length; j++) {
+            for (let j = 0; j < prevActivations.length; j++) { // For each neuron in the PREVIOUS layer
                 let errorSum = 0;
-                for (let k = 0; k < gradients.length; k++) {
-                     errorSum += this.weights[i][j][k] * errors[k];
+                for (let k = 0; k < gradients.length; k++) { // For each neuron in the CURRENT layer
+                     // Propagate the gradient (not the raw error) backward through the weights
+                     errorSum += this.weights[i][j][k] * gradients[k];
                 }
                 nextErrors[j] = errorSum;
             }

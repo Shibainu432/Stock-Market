@@ -1,5 +1,5 @@
 import React from 'react';
-import { InvestorStrategy, ComplexInvestorStrategy, HyperComplexInvestorStrategy, Region, Investor } from './types';
+import { InvestorStrategy, ComplexInvestorStrategy, HyperComplexInvestorStrategy, Region, Investor, RandomInvestorStrategy } from './types';
 import { NeuralNetwork } from './services/neuralNetwork';
 
 interface StockConfig {
@@ -36,7 +36,7 @@ type InvestorConfig = {
   name: string;
   isHuman?: boolean;
   strategyName?: string;
-  strategy: InvestorStrategy | ComplexInvestorStrategy | HyperComplexInvestorStrategy;
+  strategy: InvestorStrategy | ComplexInvestorStrategy | HyperComplexInvestorStrategy | RandomInvestorStrategy;
 };
 
 // Shuffle array in place
@@ -432,7 +432,7 @@ export const MIN_INITIAL_STOCK_PRICE = 8;
 export const MAX_INITIAL_STOCK_PRICE = 12;
 export const INITIAL_HISTORY_LENGTH = 252; // Approx 1 year
 export const HUMAN_INITIAL_INVESTOR_CASH = 1_000_000;
-export const AI_INITIAL_INVESTOR_CASH = 100_000;
+export const AI_INITIAL_INVESTOR_CASH = 100;
 export const INFLATION_RATE = 0.02 / 365; // Daily inflation rate
 
 export const TAX_CONSTANTS = {
@@ -573,13 +573,16 @@ const createNeuralNetwork = (layerSizes: number[], inputNeuronNames: string[]): 
 };
 
 const STRATEGY_NAMES = ["Momentum Bot", "Value Seeker", "Quant Algo", "Risk Manager", "Trend Follower", "Contrarian", "Growth Chaser", "Index Follower", "Volatility Trader", "Sector Rotator", "Alpha Hunter"];
+const CHAOS_AGENT_NAMES = ["Noise Trader", "Random Walk Inc.", "Volatility Catalyst", "Chaos Agent", "Momentum Gambler", "Arbitrageur Prime", "The Contrarian", "Market Agitator", "Event Horizon Capital", "Stochastic Dynamics"];
 
 export const buildInvestors = (): InvestorConfig[] => {
     const aiInvestors: InvestorConfig[] = [];
     const inputLayerSize = INDICATOR_NEURONS.length;
+    const totalInvestors = 999;
+    const chaosAgentCount = 10;
 
     // 1. Generate 999 base AI investors
-    for (let i = 0; i < 999; i++) {
+    for (let i = 0; i < totalInvestors; i++) {
         aiInvestors.push({
             id: `ai-${i + 1}`,
             name: `AI Trader #${i + 1}`,
@@ -587,17 +590,28 @@ export const buildInvestors = (): InvestorConfig[] => {
             strategy: {
                 strategyType: 'hyperComplex',
                 network: createNeuralNetwork([inputLayerSize, 10, 5, 1], INDICATOR_NEURONS), // Standard network
-                riskAversion: 0.7 + Math.random() * 1.5, // 0.7 to 2.2
+                riskAversion: 0.3 + Math.random() * 0.5, // Confidence threshold: 0.3 to 0.8
                 tradeFrequency: Math.floor(1 + Math.random() * 14), // 1 to 15
                 learningRate: 0.005 + Math.random() * 0.045 // 0.005 to 0.05
             }
         });
     }
 
-    // 2. Shuffle to pick random investors for upgrades
+    // 2. Shuffle to pick random investors for upgrades and changes
     shuffle(aiInvestors);
 
-    // 3. Upgrade Tiers
+    // 3. Create Chaos Agents (Random Traders)
+    for (let i = 0; i < chaosAgentCount; i++) {
+        const investor = aiInvestors[totalInvestors - 1 - i]; // Pick from the end of the shuffled list
+        investor.name = `${CHAOS_AGENT_NAMES[i % CHAOS_AGENT_NAMES.length]}`;
+        investor.strategyName = "Randomized Algorithm";
+        investor.strategy = {
+            strategyType: 'random',
+            tradeChance: 0.05 // 5% chance to trade any given stock each day
+        };
+    }
+
+    // 4. Upgrade Tiers
     // Tier 2: 10 Advanced Traders
     for (let i = 0; i < 10; i++) {
         const investor = aiInvestors[i];
@@ -639,21 +653,18 @@ export const buildInvestors = (): InvestorConfig[] => {
     // A 7-layer network: 1 input, 5 hidden layers of 50 neurons, 1 output layer
     oracleStrategy.network = createNeuralNetwork([inputLayerSize, 50, 50, 50, 50, 50, 1], INDICATOR_NEURONS); 
     oracleStrategy.learningRate = 0.08; // Max learning rate
-    oracleStrategy.riskAversion = 0.4; // Very aggressive
+    oracleStrategy.riskAversion = 0.1; // Very aggressive, lower threshold
 
-    // 4. Sort by ID to have a consistent order and add Human player
+    // 5. Sort by ID to have a consistent order and add Human player
     aiInvestors.sort((a,b) => parseInt(a.id.split('-')[1]) - parseInt(b.id.split('-')[1]));
     
     const humanPlayer: InvestorConfig = {
         id: 'human-player',
         name: 'Human Player',
         isHuman: true,
-        strategy: {
-            strategyType: 'hyperComplex',
-            network: createNeuralNetwork([inputLayerSize, 10, 5, 1], INDICATOR_NEURONS), // A base network for consistency
-            riskAversion: 0,
-            tradeFrequency: 0,
-            learningRate: 0
+        strategy: { // Placeholder strategy for the human player
+            strategyType: 'random',
+            tradeChance: 0
         }
     };
     

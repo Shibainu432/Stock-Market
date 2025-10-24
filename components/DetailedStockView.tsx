@@ -1,8 +1,10 @@
+
 import React, { useState, useMemo } from 'react';
-import { Stock, Investor } from '../types';
+import { Stock, Investor, SimplePriceDataPoint } from '../types';
 import PlayerTradeControls from './PlayerTradeControls';
 import NeuralNetworkVisualizer from './NeuralNetworkVisualizer';
 import CandlestickChart from './CandlestickChart';
+import PriceChart from './PriceChart';
 
 const formatVolume = (volume: number): string => {
     if (volume > 1_000_000) return `${(volume / 1_000_000).toFixed(2)}M`;
@@ -30,13 +32,42 @@ const TimeRangeButton: React.FC<{label: TimeRange, activeRange: TimeRange, onCli
     </button>
 );
 
+const ContextStat: React.FC<{
+    label: string;
+    value: number;
+    history: SimplePriceDataPoint[];
+}> = ({ label, value, history }) => {
+    const isUp = value >= 0;
+    const colorClass = isUp ? 'text-gain' : 'text-loss';
+    const chartColor = isUp ? '#22c55e' : '#ef4444';
+
+    return (
+        <div>
+            <div className="flex justify-between items-center text-sm mb-1">
+                <span className="text-gray-400">{label}</span>
+                <span className={`font-mono font-semibold ${colorClass}`}>
+                    {isUp ? '+' : ''}{value.toFixed(2)}%
+                </span>
+            </div>
+            <div className="h-8 w-full">
+                {history.length > 1 ? (
+                     <PriceChart data={history} color={chartColor} />
+                ) : (
+                    <div className="text-xs text-gray-600 flex items-center h-full">Not enough peer data</div>
+                )}
+            </div>
+        </div>
+    );
+};
+
 const DetailedStockView: React.FC<{
   stock: Stock;
+  allStocks: Stock[];
   onClose: () => void;
   player?: Investor | null;
   onPlayerBuy?: (symbol: string, shares: number) => void;
   onPlayerSell?: (symbol: string, shares: number) => void;
-}> = ({ stock, onClose, player, onPlayerBuy, onPlayerSell }) => {
+}> = ({ stock, allStocks, onClose, player, onPlayerBuy, onPlayerSell }) => {
   const [timeRange, setTimeRange] = useState<TimeRange>('1Y');
   
   if (!stock) return null;
@@ -69,6 +100,58 @@ const DetailedStockView: React.FC<{
         default: return history.slice(-252);
     }
   }, [stock.history, timeRange]);
+
+  const marketContextData = useMemo(() => {
+    const lookback = 30;
+    if (!allStocks || allStocks.length === 0 || stock.history.length < lookback) {
+        return { sectorHistory: [], regionHistory: [], sectorChange: 0, regionChange: 0 };
+    }
+
+    const sectorPeers = allStocks.filter(s => s.sector === stock.sector && s.symbol !== stock.symbol);
+    const regionPeers = allStocks.filter(s => s.region === stock.region && s.symbol !== stock.symbol);
+
+    const calculateIndexHistory = (peers: Stock[]): SimplePriceDataPoint[] => {
+        const indexHistory: SimplePriceDataPoint[] = [];
+        const baseHistoryLength = stock.history.length;
+        if (peers.length === 0) return [];
+
+        for (let i = Math.max(0, baseHistoryLength - lookback); i < baseHistoryLength; i++) {
+            let total = 0;
+            let count = 0;
+            const day = stock.history[i].day;
+
+            peers.forEach(peer => {
+                const peerHistoryPoint = peer.history.find(h => h.day === day);
+                if (peerHistoryPoint) {
+                    total += peerHistoryPoint.close;
+                    count++;
+                }
+            });
+
+            if (count > 0) {
+                indexHistory.push({ day, price: total / count });
+            }
+        }
+        return indexHistory;
+    };
+
+    const sectorHistory = calculateIndexHistory(sectorPeers);
+    const regionHistory = calculateIndexHistory(regionPeers);
+
+    const calculateChange = (history: SimplePriceDataPoint[]): number => {
+        if (history.length < 2) return 0;
+        const start = history[0].price;
+        const end = history[history.length - 1].price;
+        return start > 0 ? ((end - start) / start) * 100 : 0;
+    };
+
+    return {
+        sectorHistory,
+        regionHistory,
+        sectorChange: calculateChange(sectorHistory),
+        regionChange: calculateChange(regionHistory)
+    };
+  }, [stock, allStocks]);
 
   return (
     <div 
@@ -130,6 +213,21 @@ const DetailedStockView: React.FC<{
                     <StatItem label="52-Week High" value={high52w.toFixed(2)} />
                     <StatItem label="52-Week Low" value={low52w.toFixed(2)} />
                   </div>
+                </div>
+                 <div>
+                    <h3 className="text-lg font-bold text-gray-200 mb-2">Market Context (30d)</h3>
+                    <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 space-y-4">
+                        <ContextStat 
+                        label={`${stock.sector} Sector`}
+                        value={marketContextData.sectorChange}
+                        history={marketContextData.sectorHistory}
+                        />
+                        <ContextStat 
+                        label={`${stock.region} Region`}
+                        value={marketContextData.regionChange}
+                        history={marketContextData.regionHistory}
+                        />
+                    </div>
                 </div>
               </div>
             </div>

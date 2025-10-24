@@ -217,7 +217,8 @@ const App: React.FC = () => {
       </main>
 
       {selectedStock && <DetailedStockView 
-        stock={selectedStock} 
+        stock={selectedStock}
+        allStocks={activeStocks}
         onClose={handleCloseDetailView}
         player={humanPlayer}
         onPlayerBuy={handlePlayerBuy}
