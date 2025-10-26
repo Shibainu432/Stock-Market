@@ -29,7 +29,13 @@ const App: React.FC = () => {
 
   const handleReset = useCallback(() => {
     setIsRunning(false);
-    const initialState = initializeState();
+    const initialState = initializeState({ useRealPrices: false, realisticDemographics: false });
+    setSimulationState(initialState);
+  }, []);
+
+  const handleResetWithRealData = useCallback(() => {
+    setIsRunning(false);
+    const initialState = initializeState({ useRealPrices: true, realisticDemographics: true });
     setSimulationState(initialState);
   }, []);
 
@@ -214,6 +220,7 @@ const App: React.FC = () => {
         isRunning={isRunning}
         onPlayPause={handlePlayPause}
         onReset={handleReset}
+        onResetWithRealData={handleResetWithRealData}
         speed={speed}
         onSpeedChange={handleSpeedChange}
         searchQuery={searchQuery}

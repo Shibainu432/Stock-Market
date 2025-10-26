@@ -166,6 +166,7 @@ const DetailedStockView: React.FC<{
             <div>
                 <h2 className="text-2xl font-bold text-gray-200 flex items-center gap-3">
                     {stock.name} <span className="text-xl text-gray-400">({stock.symbol})</span>
+                    {stock.isETF && <span className="text-sm bg-gray-600 text-gray-300 font-bold py-1 px-2 rounded-full">ETF</span>}
                 </h2>
                 <p className="text-sm text-gray-400">{stock.sector} Sector</p>
             </div>
@@ -214,31 +215,51 @@ const DetailedStockView: React.FC<{
                     <StatItem label="52-Week Low" value={low52w.toFixed(2)} />
                   </div>
                 </div>
-                 <div>
-                    <h3 className="text-lg font-bold text-gray-200 mb-2">Market Context (30d)</h3>
-                    <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 space-y-4">
-                        <ContextStat 
-                        label={`${stock.sector} Sector`}
-                        value={marketContextData.sectorChange}
-                        history={marketContextData.sectorHistory}
-                        />
-                        <ContextStat 
-                        label={`${stock.region} Region`}
-                        value={marketContextData.regionChange}
-                        history={marketContextData.regionHistory}
-                        />
+                {stock.isETF && stock.holdings && (
+                    <div>
+                        <h3 className="text-lg font-bold text-gray-200 mb-2">Top Holdings</h3>
+                        <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 max-h-64 overflow-y-auto">
+                            {stock.holdings.slice(0, 10).map(holding => (
+                                <div key={holding.symbol} className="flex justify-between items-center py-1.5 border-b border-gray-700/50 last:border-b-0 text-sm">
+                                    <div>
+                                        <span className="font-bold text-gray-200">{holding.symbol}</span>
+                                        <p className="text-xs text-gray-400 truncate max-w-[150px]">{holding.name}</p>
+                                    </div>
+                                    <span className="font-mono text-gray-300 font-semibold">{(holding.weight * 100).toFixed(2)}%</span>
+                                </div>
+                            ))}
+                        </div>
                     </div>
-                </div>
+                )}
+                 {!stock.isETF && (
+                    <div>
+                        <h3 className="text-lg font-bold text-gray-200 mb-2">Market Context (30d)</h3>
+                        <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 space-y-4">
+                            <ContextStat 
+                            label={`${stock.sector} Sector`}
+                            value={marketContextData.sectorChange}
+                            history={marketContextData.sectorHistory}
+                            />
+                            <ContextStat 
+                            label={`${stock.region} Region`}
+                            value={marketContextData.regionChange}
+                            history={marketContextData.regionHistory}
+                            />
+                        </div>
+                    </div>
+                 )}
               </div>
             </div>
-             <div className="mt-6">
-                <h3 className="text-lg font-bold text-gray-200 mb-2">Corporate AI Neural Network</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <NeuralNetworkVisualizer title="Split Logic (Input Avg. Strength)" weights={stock.corporateAI.splitNN.getInputLayerWeights()} />
-                    <NeuralNetworkVisualizer title="Alliance Logic (Input Avg. Strength)" weights={stock.corporateAI.allianceNN.getInputLayerWeights()} />
-                    <NeuralNetworkVisualizer title="Acquisition Logic (Input Avg. Strength)" weights={stock.corporateAI.acquisitionNN.getInputLayerWeights()} />
+             {stock.corporateAI && (
+                <div className="mt-6">
+                    <h3 className="text-lg font-bold text-gray-200 mb-2">Corporate AI Neural Network</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <NeuralNetworkVisualizer title="Split Logic (Input Avg. Strength)" weights={stock.corporateAI.splitNN.getInputLayerWeights()} />
+                        <NeuralNetworkVisualizer title="Alliance Logic (Input Avg. Strength)" weights={stock.corporateAI.allianceNN.getInputLayerWeights()} />
+                        <NeuralNetworkVisualizer title="Acquisition Logic (Input Avg. Strength)" weights={stock.corporateAI.acquisitionNN.getInputLayerWeights()} />
+                    </div>
                 </div>
-            </div>
+            )}
         </div>
       </div>
     </div>

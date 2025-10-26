@@ -37,7 +37,10 @@ const StockListItem: React.FC<StockListItemProps> = ({ stock, onSelect }) => {
       className="grid grid-cols-12 gap-2 items-center px-4 py-3 border-b border-gray-700 last:border-b-0 hover:bg-gray-900/75 cursor-pointer transition-colors duration-150 text-sm"
     >
       <div className="col-span-3 truncate">
-        <p className="font-bold text-gray-200">{stock.symbol}</p>
+        <p className="font-bold text-gray-200 flex items-center gap-2">
+          {stock.symbol}
+          {stock.isETF && <span className="text-xs bg-gray-600 text-gray-300 font-bold py-0.5 px-1.5 rounded-full">ETF</span>}
+        </p>
         <p className="text-xs text-gray-400 truncate">{stock.name}</p>
       </div>
       <div className="col-span-3 h-8">

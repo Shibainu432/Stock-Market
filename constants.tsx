@@ -3,11 +3,13 @@ import React from 'react';
 import { InvestorStrategy, ComplexInvestorStrategy, HyperComplexInvestorStrategy, Region, Investor, RandomInvestorStrategy } from './types';
 import { NeuralNetwork } from './services/neuralNetwork';
 
-interface StockConfig {
+export interface StockConfig {
     symbol: string;
     name: string;
     sector: string;
     region: Region;
+    basePrice: number;
+    isETF?: boolean;
 }
 
 // Defines the categories for macro events, which correspond to the output neurons of the News Picker AI.
@@ -38,6 +40,7 @@ type InvestorConfig = {
   isHuman?: boolean;
   strategyName?: string;
   strategy: InvestorStrategy | ComplexInvestorStrategy | HyperComplexInvestorStrategy | RandomInvestorStrategy;
+  initialCash: number;
 };
 
 // Shuffle array in place
@@ -50,371 +53,110 @@ const shuffle = <T,>(array: T[]): T[] => {
     return array;
 }
 
-// Assign regions to stocks based on real-world market cap distribution
-// Proportions: North America (~60%), Asia (~25%), Europe (~15%)
-const assignRegionsToStocks = (stocks: Omit<StockConfig, 'region'>[]): StockConfig[] => {
-    const totalStocks = stocks.length;
-    const shuffled = shuffle([...stocks]);
-    
-    const naCount = Math.floor(totalStocks * 0.60);
-    const asiaCount = Math.floor(totalStocks * 0.25);
-    // const europeCount = totalStocks - naCount - asiaCount;
+// --- Fictional Name Generation for Random Simulation ---
+const RANDOM_NAME_PREFIXES = ['Apex', 'Stellar', 'Quantum', 'Orion', 'Cyber', 'Bio', 'Geo', 'Fusion', 'Nova', 'Vertex', 'Axiom', 'Pinnacle', 'Zenith', 'Elysian', 'Momentum', 'Helios', 'Vanguard', 'Titan', 'Seraph', 'Echo'];
+const RANDOM_NAME_SUFFIXES = ['Dynamics', 'Solutions', 'Labs', 'Systems', 'Corp', 'Industries', 'Tech', 'Ventures', 'Holdings', 'Group', 'Analytics', 'Innovations', 'Enterprises', 'Robotics', 'Pharmaceuticals', 'Energy', 'Financial', 'Logistics'];
 
-    return shuffled.map((stock, index) => {
-        let region: Region;
-        if (index < naCount) {
-            region = 'North America';
-        } else if (index < naCount + asiaCount) {
-            region = 'Asia';
-        } else {
-            region = 'Europe';
-        }
-        return { ...stock, region };
-    });
+const generateSymbolFromName = (name: string): string => {
+    const words = name.replace(/[^a-zA-Z\s]/g, '').split(' ');
+    let symbol = '';
+    if (words.length > 1) {
+        symbol = (words[0].substring(0, 2) + words[1].substring(0, 2));
+    } else if (words.length === 1 && words[0].length >= 4) {
+        symbol = words[0].substring(0, 4);
+    } else {
+        symbol = (words[0] + 'CORP').substring(0, 4);
+    }
+    return symbol.toUpperCase();
+};
+
+export const generateRandomStock = (usedSymbols: Set<string>): { randomName: string, randomSymbol: string } => {
+    let randomName = '';
+    let randomSymbol = '';
+    let attempts = 0;
+
+    do {
+        const prefix = RANDOM_NAME_PREFIXES[Math.floor(Math.random() * RANDOM_NAME_PREFIXES.length)];
+        const suffix = RANDOM_NAME_SUFFIXES[Math.floor(Math.random() * RANDOM_NAME_SUFFIXES.length)];
+        randomName = `${prefix} ${suffix}`;
+        randomSymbol = generateSymbolFromName(randomName);
+        attempts++;
+    } while (usedSymbols.has(randomSymbol) && attempts < 100);
+
+    if (usedSymbols.has(randomSymbol)) {
+        let suffixNum = 1;
+        let originalSymbol = randomSymbol.substring(0,3);
+        do {
+            randomSymbol = originalSymbol + suffixNum;
+            suffixNum++;
+        } while (usedSymbols.has(randomSymbol))
+    }
+    
+    return { randomName, randomSymbol };
 };
 
 
-const BASE_STOCKS: Omit<StockConfig, 'region'>[] = [
-  { symbol: 'INNV', name: 'Innovate Corp', sector: 'Technology' },
-  { symbol: 'TECH', name: 'TechGen Inc.', sector: 'Technology' },
-  { symbol: 'HLTH', name: 'HealthSphere', sector: 'Health' },
-  { symbol: 'ENRG', name: 'Syner-G', sector: 'Energy' },
-  { symbol: 'FINX', name: 'FinEx Solutions', sector: 'Finance' },
-  { symbol: 'QUAN', name: 'Quantum Leap', sector: 'Technology' },
-  { symbol: 'CYBR', name: 'CyberSec Corp', sector: 'Technology' },
-  { symbol: 'BIOF', 'name': 'BioFuture Labs', sector: 'Health' },
-  { symbol: 'SOLR', name: 'Solaris Energy', sector: 'Energy' },
-  { symbol: 'DRON', name: 'DroneWorks', sector: 'Technology' },
-  { symbol: 'DATA', name: 'DataMine Inc.', sector: 'Technology' },
-  { symbol: 'ROBO', name: 'RoboGenix', sector: 'Technology' },
-  { symbol: 'AQUA', name: 'AquaPure', sector: 'Industrials' },
-  { symbol: 'FUTR', name: 'Futuristics', sector: 'Industrials' },
-  { symbol: 'SPCE', name: 'SpaceWarp', sector: 'Industrials' },
-  { symbol: 'NANO', name: 'NanoBuild', sector: 'Technology' },
-  { symbol: 'VRTX', name: 'Vertex Realty', sector: 'Finance' },
-  { symbol: 'GAME', name: 'GameSphere', sector: 'Technology' },
-  { symbol: 'MEDI', name: 'MediCare+', sector: 'Health' },
-  { symbol: 'AGRI', name: 'AgriGrow', sector: 'Industrials' },
-  // Technology Additions
-  { symbol: 'EDGE', name: 'Edge AI Systems', sector: 'Technology' },
-  { symbol: 'CLD', name: 'CloudCore Inc.', sector: 'Technology' },
-  { symbol: 'VR', name: 'Virtual Reality Labs', sector: 'Technology' },
-  { symbol: 'IOT', name: 'Internet of Things Co.', sector: 'Technology' },
-  { symbol: 'SFTW', name: 'Software Solutions', sector: 'Technology' },
-  { symbol: 'LOGI', name: 'LogiCore', sector: 'Technology' },
-  // Health Additions
-  { symbol: 'GENE', name: 'Genomics PLC', sector: 'Health' },
-  { symbol: 'TELE', name: 'TeleHealth Connect', sector: 'Health' },
-  { symbol: 'SURG', name: 'Surgical Systems', sector: 'Health' },
-  { symbol: 'VITA', name: 'VitaPharm', sector: 'Health' },
-  { symbol: 'CARE', name: 'CareBotics', sector: 'Health' },
-  { symbol: 'IMMU', name: 'ImmunoTherapeutics', sector: 'Health' },
-  // Energy Additions
-  { symbol: 'HYDR', name: 'HydroGen Power', sector: 'Energy' },
-  { symbol: 'WIND', name: 'Windmill Corp', sector: 'Energy' },
-  { symbol: 'NUCL', name: 'Nuclear Fusion Inc.', sector: 'Energy' },
-  { symbol: 'BATT', name: 'BatteryTech', sector: 'Energy' },
-  { symbol: 'GEO', name: 'GeoThermal Dynamics', sector: 'Energy' },
-  { symbol: 'GRID', name: 'SmartGrid Systems', sector: 'Energy' },
-  // Finance Additions
-  { symbol: 'INSR', name: 'InsuranTech', sector: 'Finance' },
-  { symbol: 'PAY', name: 'PaySphere', sector: 'Finance' },
-  { symbol: 'LEND', name: 'LendLogic', sector: 'Finance' },
-  { symbol: 'BLOK', name: 'BlockChain Ventures', sector: 'Finance' },
-  { symbol: 'TRDE', name: 'TradeFlow', sector: 'Finance' },
-  { symbol: 'WEAL', name: 'WealthWise', sector: 'Finance' },
-  // Industrials Additions
-  { symbol: 'AERO', name: 'AeroDynamics', sector: 'Industrials' },
-  { symbol: 'SHIP', name: 'Global Shipping', sector: 'Industrials' },
-  { symbol: 'BLD', name: 'BuildRight Construction', sector: 'Industrials' },
-  { symbol: 'AUTO', name: 'AutoDrive Systems', sector: 'Industrials' },
-  { symbol: 'CHEM', name: 'ChemiCorp', sector: 'Industrials' },
-  { symbol: 'RAIL', name: 'RailWorks Logistics', sector: 'Industrials' },
-  // --- Additional Stocks (272) ---
-  // --- Technology Sector (55 new) ---
-  { symbol: 'QNTM', name: 'Quantum Core AI', sector: 'Technology' },
-  { symbol: 'SGLR', name: 'Singularity Solutions', sector: 'Technology' },
-  { symbol: 'FBRC', name: 'Fabricate Robotics', sector: 'Technology' },
-  { symbol: 'CRWN', name: 'CrowdNet Systems', sector: 'Technology' },
-  { symbol: 'PLGN', name: 'Polygon Graphics', sector: 'Technology' },
-  { symbol: 'NVGTM', name: 'Navigate Mapping', sector: 'Technology' },
-  { symbol: 'ZPHY', name: 'Zephyr OS', sector: 'Technology' },
-  { symbol: 'ECHO', name: 'EchoComms Inc.', sector: 'Technology' },
-  { symbol: 'VLCT', name: 'Velocity Data', sector: 'Technology' },
-  { symbol: 'AXON', name: 'Axon Neural', sector: 'Technology' },
-  { symbol: 'PXL', name: 'PixelForge', sector: 'Technology' },
-  { symbol: 'CDX', name: 'Codex Software', sector: 'Technology' },
-  { symbol: 'SYN', name: 'SynthoLogic', sector: 'Technology' },
-  { symbol: 'VRTU', name: 'VirtuVerse', sector: 'Technology' },
-  { symbol: 'ADPT', name: 'AdaptiCore', sector: 'Technology' },
-  { symbol: 'EVLV', name: 'Evolv AI', sector: 'Technology' },
-  { symbol: 'NBLA', name: 'Nebula Cloud', sector: 'Technology' },
-  { symbol: 'FRGM', name: 'Fragment Security', sector: 'Technology' },
-  { symbol: 'CRTX', name: 'Cortex Circuits', sector: 'Technology' },
-  { symbol: 'LNKD', name: 'Link-State Comms', sector: 'Technology' },
-  { symbol: 'OMNI', name: 'Omni-Metrics', sector: 'Technology' },
-  { symbol: 'VCTR', name: 'Vector AI', sector: 'Technology' },
-  { symbol: 'APEX', name: 'Apex Logic', sector: 'Technology' },
-  { symbol: 'ZNTHW', name: 'Zenith Ware', sector: 'Technology' },
-  { symbol: 'FSNDT', name: 'Fusion Data', sector: 'Technology' },
-  { symbol: 'NRAL', name: 'Neural-Net Labs', sector: 'Technology' },
-  { symbol: 'DGTZ', name: 'Digitize Solutions', sector: 'Technology' },
-  { symbol: 'ALGO', name: 'Algo-Rhythm', sector: 'Technology' },
-  { symbol: 'STRM', name: 'StreamCore', sector: 'Technology' },
-  { symbol: 'ARCA', name: 'Arcane Software', sector: 'Technology' },
-  { symbol: 'CRCL', name: 'Circuitry Inc.', sector: 'Technology' },
-  { symbol: 'TTRN', name: 'Patternica', sector: 'Technology' },
-  { symbol: 'MDLR', name: 'Modular Systems', sector: 'Technology' },
-  { symbol: 'PRSM', name: 'Prism Analytics', sector: 'Technology' },
-  { symbol: 'SPR', name: 'Sphere Virtual', sector: 'Technology' },
-  { symbol: 'INTG', name: 'Integrix', sector: 'Technology' },
-  { symbol: 'FLNTA', name: 'Fluent AI', sector: 'Technology' },
-  { symbol: 'LYNX', name: 'Lynx Microsystems', sector: 'Technology' },
-  { symbol: 'ORCL', name: 'Oracle Core', sector: 'Technology' },
-  { symbol: 'PHSE', name: 'Phase Shift', sector: 'Technology' },
-  { symbol: 'RDTN', name: 'Radiant Tech', sector: 'Technology' },
-  { symbol: 'SCPT', name: 'ScriptLogic', sector: 'Technology' },
-  { symbol: 'TNSN', name: 'Tension Networks', sector: 'Technology' },
-  { symbol: 'UNTY', name: 'Unity Base', sector: 'Technology' },
-  { symbol: 'WFRM', name: 'Waveform Digital', sector: 'Technology' },
-  { symbol: 'XNPS', name: 'Synapse Dynamics', sector: 'Technology' },
-  { symbol: 'YGG', name: 'Yggdrasil Computing', sector: 'Technology' },
-  { symbol: 'ZTRX', name: 'Zetrix Solutions', sector: 'Technology' },
-  { symbol: 'TSRT', name: 'Tesseract Systems', sector: 'Technology' },
-  { symbol: 'ATLS', name: 'Atlas AI', sector: 'Technology' },
-  { symbol: 'HIVE', name: 'HiveMind Connect', sector: 'Technology' },
-  { symbol: 'MTRX', name: 'Matrix Labs', sector: 'Technology' },
-  { symbol: 'PRLL', name: 'Parallel Process', sector: 'Technology' },
-  { symbol: 'CBLT', name: 'Cobalt Robotics', sector: 'Technology' },
-  { symbol: 'META', name: 'Meta-Verse Dynamics', sector: 'Technology' },
-  // --- Health Sector (54 new) ---
-  { symbol: 'VTPH', name: 'Vertex Pharma', sector: 'Health' },
-  { symbol: 'CRDL', name: 'CardioLogic', sector: 'Health' },
-  { symbol: 'ONCX', name: 'Onco-X Therapeutics', sector: 'Health' },
-  { symbol: 'SANO', name: 'SanoVita Labs', sector: 'Health' },
-  { symbol: 'CURE', name: 'CureAll Pharma', sector: 'Health' },
-  { symbol: 'HEAL', name: 'HealPoint Diagnostics', sector: 'Health' },
-  { symbol: 'PLSE', name: 'Pulse-Wave Medical', sector: 'Health' },
-  { symbol: 'VTAL', name: 'Vitalis Health', sector: 'Health' },
-  { symbol: 'CLNX', name: 'Clini-Gen', sector: 'Health' },
-  { symbol: 'RJUV', name: 'Rejuva Life Sciences', sector: 'Health' },
-  { symbol: 'ORTH', name: 'Ortho-Solutions', sector: 'Health' },
-  { symbol: 'PDIA', name: 'Pedia-Care Inc.', sector: 'Health' },
-  { symbol: 'DNTL', name: 'Denta-Tech', sector: 'Health' },
-  { symbol: 'OPTI', name: 'Opti-View Systems', sector: 'Health' },
-  { symbol: 'PRCS', name: 'Precision Surgical', sector: 'Health' },
-  { symbol: 'GNCS', name: 'Genecis Corp', sector: 'Health' },
-  { symbol: 'TRNS', name: 'Trans-Medica', sector: 'Health' },
-  { symbol: 'NBLS', name: 'Nebulis Inhalants', sector: 'Health' },
-  { symbol: 'SNTC', name: 'Senti-Tech', sector: 'Health' },
-  { symbol: 'BHWL', name: 'Bio-Wellness', sector: 'Health' },
-  { symbol: 'CTSL', name: 'Catalyst Bio', sector: 'Health' },
-  { symbol: 'DRMA', name: 'Derma-Cure', sector: 'Health' },
-  { symbol: 'ELXR', name: 'Elixir Life', sector: 'Health' },
-  { symbol: 'FLRA', name: 'Flora-Health', sector: 'Health' },
-  { symbol: 'HYGA', name: 'Hygeia Labs', sector: 'Health' },
-  { symbol: 'INFN', name: 'Infin-Gene', sector: 'Health' },
-  { symbol: 'LMNL', name: 'Lumenal Devices', sector: 'Health' },
-  { symbol: 'MCRB', name: 'Micro-Bionics', sector: 'Health' },
-  { symbol: 'NUTR', name: 'Nutri-Gen', sector: 'Health' },
-  { symbol: 'PRTG', name: 'Proteus Medical', sector: 'Health' },
-  { symbol: 'SNTL', name: 'Sentinel Health', sector: 'Health' },
-  { symbol: 'TRMA', name: 'Trauma-Care', sector: 'Health' },
-  { symbol: 'UNVR', name: 'Univer-Salts', sector: 'Health' },
-  { symbol: 'VCTS', name: 'Vectis Diagnostics', sector: 'Health' },
-  { symbol: 'XNTC', name: 'Xenotic Pharma', sector: 'Health' },
-  { symbol: 'ZMRN', name: 'Zym-Renew', sector: 'Health' },
-  { symbol: 'AURA', name: 'Aura-Sense', sector: 'Health' },
-  { symbol: 'CRBR', name: 'Cerebral Dynamics', sector: 'Health' },
-  { symbol: 'DNVA', name: 'Dena-Vita Inc.', sector: 'Health' },
-  { symbol: 'IMPL', name: 'Implanta-Tech', sector: 'Health' },
-  { symbol: 'LNVA', name: 'Longev-A', sector: 'Health' },
-  { symbol: 'MYCO', name: 'Myco-Pharma', sector: 'Health' },
-  { symbol: 'NBLT', name: 'Nebulite', sector: 'Health' },
-  { symbol: 'PULM', name: 'Pulmo-Care', sector: 'Health' },
-  { symbol: 'RNWL', name: 'Renewal Med', sector: 'Health' },
-  { symbol: 'Soma', name: 'Soma-Tech', sector: 'Health' },
-  { symbol: 'TRQN', name: 'Tranquil-Life', sector: 'Health' },
-  { symbol: 'VIVI', name: 'Vivid-Health', sector: 'Health' },
-  { symbol: 'XTND', name: 'Extend-Life', sector: 'Health' },
-  { symbol: 'ALGY', name: 'Alga-Health', sector: 'Health' },
-  { symbol: 'KINE', name: 'Kineti-Care', sector: 'Health' },
-  { symbol: 'NRVE', name: 'Nerve-Gen', sector: 'Health' },
-  { symbol: 'STSK', name: 'Status-K', sector: 'Health' },
-  { symbol: 'ZYGN', name: 'Zygon Health', sector: 'Health' },
-  // --- Energy Sector (54 new) ---
-  { symbol: 'FLUX', name: 'Flux Power Grid', sector: 'Energy' },
-  { symbol: 'ATMO', name: 'Atmo-Sphere Energy', sector: 'Energy' },
-  { symbol: 'TRRA', name: 'Terra-Volt', sector: 'Energy' },
-  { symbol: 'CRYO', name: 'Cryo-Gen', sector: 'Energy' },
-  { symbol: 'PYRO', name: 'Pyro-Source', sector: 'Energy' },
-  { symbol: 'KNTC', name: 'Kinetic Power', sector: 'Energy' },
-  { symbol: 'STTC', name: 'Static Electric', sector: 'Energy' },
-  { symbol: 'WVFR', name: 'Waveform Energy', sector: 'Energy' },
-  { symbol: 'TDAL', name: 'Tidal-Flow', sector: 'Energy' },
-  { symbol: 'SPRK', name: 'Spark Resources', sector: 'Energy' },
-  { symbol: 'PTRL', name: 'Petro-Global', sector: 'Energy' },
-  { symbol: 'BFL', name: 'Bio-Fuel Corp', sector: 'Energy' },
-  { symbol: 'CRBN', name: 'Carbon Capture Co.', sector: 'Energy' },
-  { symbol: 'DRLL', name: 'Drill-Tech', sector: 'Energy' },
-  { symbol: 'ELCT', name: 'Electri-Core', sector: 'Energy' },
-  { symbol: 'FSL', name: 'Fossil Fuels Inc.', sector: 'Energy' },
-  { symbol: 'GTHR', name: 'Geothermal Co.', sector: 'Energy' },
-  { symbol: 'HBR', name: 'Harbor Energy', sector: 'Energy' },
-  { symbol: 'ION', name: 'Ion-Drive', sector: 'Energy' },
-  { symbol: 'JLT', name: 'Jolt Power', sector: 'Energy' },
-  { symbol: 'LMN', name: 'Lumen-Watt', sector: 'Energy' },
-  { symbol: 'MTRN', name: 'Metron Gas', sector: 'Energy' },
-  { symbol: 'NRTH', name: 'North Sea Oil', sector: 'Energy' },
-  { symbol: 'OCEN', name: 'Oceanic Power', sector: 'Energy' },
-  { symbol: 'PPLN', name: 'PipeLine Inc.', sector: 'Energy' },
-  { symbol: 'QSR', name: 'Quasar Energy', sector: 'Energy' },
-  { symbol: 'RFN', name: 'Refine-Co', sector: 'Energy' },
-  { symbol: 'SHLE', name: 'Shale Dynamics', sector: 'Energy' },
-  { symbol: 'TRBN', name: 'Turbine Dynamics', sector: 'Energy' },
-  { symbol: 'VLTA', name: 'Voltaic Systems', sector: 'Energy' },
-  { symbol: 'XTRC', name: 'Extract Energy', sector: 'Energy' },
-  { symbol: 'YTNE', name: 'Yotta-NRG', sector: 'Energy' },
-  { symbol: 'ZENE', name: 'Zenith Energy', sector: 'Energy' },
-  { symbol: 'AMPV', name: 'AmpereVolt', sector: 'Energy' },
-  { symbol: 'CONV', name: 'Converge Power', sector: 'Energy' },
-  { symbol: 'DYNO', name: 'Dyno-Source', sector: 'Energy' },
-  { symbol: 'ETHN', name: 'Ethanol Plus', sector: 'Energy' },
-  { symbol: 'FRAC', name: 'Fracture Oil Co.', sector: 'Energy' },
-  { symbol: 'GIGA', name: 'GigaWatt Storage', sector: 'Energy' },
-  { symbol: 'HELI', name: 'Helios Power', sector: 'Energy' },
-  { symbol: 'INFRE', name: 'Infra-Grid Energy', sector: 'Energy' },
-  { symbol: 'KILO', name: 'Kilo-Source', sector: 'Energy' },
-  { symbol: 'LITH', name: 'Lithium Core', sector: 'Energy' },
-  { symbol: 'MEGA', name: 'Mega-Charge', sector: 'Energy' },
-  { symbol: 'NEON', name: 'Neon Gas Co.', sector: 'Energy' },
-  { symbol: 'OPTM', name: 'Optima Fuel', sector: 'Energy' },
-  { symbol: 'PLSM', name: 'Plasma-Drive', sector: 'Energy' },
-  { symbol: 'RDT', name: 'Radiant Heat', sector: 'Energy' },
-  { symbol: 'SONC', name: 'Sonic Energy', sector: 'Energy' },
-  { symbol: 'THRM', name: 'Therma-Gen', sector: 'Energy' },
-  { symbol: 'URAN', name: 'Uranium One', sector: 'Energy' },
-  { symbol: 'VRTXW', name: 'Vortex Wind', sector: 'Energy' },
-  { symbol: 'WATT', name: 'Watt-Solutions', sector: 'Energy' },
-  { symbol: 'FSNPR', name: 'Fusion Power Co', sector: 'Energy' },
-  // --- Finance Sector (54 new) ---
-  { symbol: 'ACML', name: 'Accumulus Capital', sector: 'Finance' },
-  { symbol: 'BNKR', name: 'BankRight', sector: 'Finance' },
-  { symbol: 'CRDO', name: 'Credo Finance', sector: 'Finance' },
-  { symbol: 'DIVI', name: 'Dividend Trust', sector: 'Finance' },
-  { symbol: 'EQUI', name: 'Equi-Trade', sector: 'Finance' },
-  { symbol: 'FLNTP', name: 'Fluent Payments', sector: 'Finance' },
-  { symbol: 'GLBE', name: 'GlobalVest', sector: 'Finance' },
-  { symbol: 'HRBR', name: 'Harbor Holdings', sector: 'Finance' },
-  { symbol: 'IVST', name: 'Investa-Corp', sector: 'Finance' },
-  { symbol: 'JBLT', name: 'Jubilee Trust', sector: 'Finance' },
-  { symbol: 'KNSH', name: 'Kensho Capital', sector: 'Finance' },
-  { symbol: 'LGCY', name: 'Legacy Bank', sector: 'Finance' },
-  { symbol: 'MRKT', name: 'Market-Flow', sector: 'Finance' },
-  { symbol: 'NEXS', name: 'Nexus Capital', sector: 'Finance' },
-  { symbol: 'OPLN', name: 'Opulence Wealth', sector: 'Finance' },
-  { symbol: 'PRSP', name: 'Prosper-Fund', sector: 'Finance' },
-  { symbol: 'QNTF', name: 'Quant-Fi', sector: 'Finance' },
-  { symbol: 'RELY', name: 'Rely-Sure', sector: 'Finance' },
-  { symbol: 'STRL', name: 'Sterling Group', sector: 'Finance' },
-  { symbol: 'TRST', name: 'Trust-Core', sector: 'Finance' },
-  { symbol: 'UNFY', name: 'Unify Financial', sector: 'Finance' },
-  { symbol: 'VLUE', name: 'Value-Base', sector: 'Finance' },
-  { symbol: 'WRTH', name: 'Worth-Well', sector: 'Finance' },
-  { symbol: 'XCHG', name: 'X-Change', sector: 'Finance' },
-  { symbol: 'YLD', name: 'Yield-Stone', sector: 'Finance' },
-  { symbol: 'ZENT', name: 'Zenith Trust', sector: 'Finance' },
-  { symbol: 'AST', name: 'Asset-Wise', sector: 'Finance' },
-  { symbol: 'BETA', name: 'Beta-Vest', sector: 'Finance' },
-  { symbol: 'CMPT', name: 'Compound Capital', sector: 'Finance' },
-  { symbol: 'DLR', name: 'Dollar-Wise', sector: 'Finance' },
-  { symbol: 'FLIO', name: 'Folio-Metrics', sector: 'Finance' },
-  { symbol: 'GRNT', name: 'Guaranty Trust', sector: 'Finance' },
-  { symbol: 'HEDG', name: 'Hedge-Right', sector: 'Finance' },
-  { symbol: 'INCM', name: 'Income-Plus', sector: 'Finance' },
-  { symbol: 'LVRG', name: 'Leverage Co.', sector: 'Finance' },
-  { symbol: 'MNTY', name: 'Moneta Systems', sector: 'Finance' },
-  { symbol: 'NVGTF', name: 'Navigate Funds', sector: 'Finance' },
-  { symbol: 'PLCY', name: 'Policy-Sure', sector: 'Finance' },
-  { symbol: 'RTRN', name: 'Return-First', sector: 'Finance' },
-  { symbol: 'SAVY', name: 'Savvy-Invest', sector: 'Finance' },
-  { symbol: 'TNGS', name: 'Tangible Assets', sector: 'Finance' },
-  { symbol: 'UTLY', name: 'Utility Finance', sector: 'Finance' },
-  { symbol: 'VSTA', name: 'Vista Holdings', sector: 'Finance' },
-  { symbol: 'WLTH', name: 'Wealth-Core', sector: 'Finance' },
-  { symbol: 'XFIN', name: 'X-Finance', sector: 'Finance' },
-  { symbol: 'YFIN', name: 'Y-Finance', sector: 'Finance' },
-  { symbol: 'ZFIN', name: 'Z-Finance', sector: 'Finance' },
-  { symbol: 'ALPH', name: 'Alpha-Vest', sector: 'Finance' },
-  { symbol: 'CAP', name: 'Capital-Source', sector: 'Finance' },
-  { symbol: 'EQTY', name: 'Equity-First', sector: 'Finance' },
-  { symbol: 'FND', name: 'Foundation Trust', sector: 'Finance' },
-  { symbol: 'GROW', name: 'Growth-Fund', sector: 'Finance' },
-  { symbol: 'MNGD', name: 'Managed Assets', sector: 'Finance' },
-  // --- Industrials Sector (55 new) ---
-  { symbol: 'AGRM', name: 'Agro-Mechanics', sector: 'Industrials' },
-  { symbol: 'BLST', name: 'Ballisti-Co', sector: 'Industrials' },
-  { symbol: 'CNST', name: 'Construct-X', sector: 'Industrials' },
-  { symbol: 'DFNS', name: 'Defense Dynamics', sector: 'Industrials' },
-  { symbol: 'ELEC', name: 'Elec-Mech', sector: 'Industrials' },
-  { symbol: 'FABR', name: 'Fabri-Corp', sector: 'Industrials' },
-  { symbol: 'GLBL', name: 'Global-Trans', sector: 'Industrials' },
-  { symbol: 'HVAC', name: 'HVAC-Pro', sector: 'Industrials' },
-  { symbol: 'INFRB', name: 'Infra-Build', sector: 'Industrials' },
-  { symbol: 'JNT', name: 'Joint-Fab', sector: 'Industrials' },
-  { symbol: 'KNMT', name: 'Kin-Metal', sector: 'Industrials' },
-  { symbol: 'LBRC', name: 'Lubri-Co', sector: 'Industrials' },
-  { symbol: 'MTRL', name: 'Materi-Ex', sector: 'Industrials' },
-  { symbol: 'NVG', name: 'Navi-Gate Logistics', sector: 'Industrials' },
-  { symbol: 'OPRT', name: 'Operate-Right', sector: 'Industrials' },
-  { symbol: 'PMP', name: 'Pump-Works', sector: 'Industrials' },
-  { symbol: 'QSTL', name: 'Quik-Steel', sector: 'Industrials' },
-  { symbol: 'ROTO', name: 'Roto-Works', sector: 'Industrials' },
-  { symbol: 'SHPNG', name: 'Ship-Right', sector: 'Industrials' },
-  { symbol: 'TRBO', name: 'Turbo-Dyne', sector: 'Industrials' },
-  { symbol: 'UTEC', name: 'Util-Tech', sector: 'Industrials' },
-  { symbol: 'VLVE', name: 'Valve-Co', sector: 'Industrials' },
-  { symbol: 'WELD', name: 'Weld-Right', sector: 'Industrials' },
-  { symbol: 'XTRD', name: 'X-Trude', sector: 'Industrials' },
-  { symbol: 'YRD', name: 'Yard-Works', sector: 'Industrials' },
-  { symbol: 'ZNTHM', name: 'Zenith Manufacturing', sector: 'Industrials' },
-  { symbol: 'APLY', name: 'Applied Mechanics', sector: 'Industrials' },
-  { symbol: 'BRNG', name: 'Bearing-Co', sector: 'Industrials' },
-  { symbol: 'CRGO', name: 'Cargo-Lift', sector: 'Industrials' },
-  { symbol: 'DURA', name: 'Dura-Frame', sector: 'Industrials' },
-  { symbol: 'ENVR', name: 'Enviro-Solutions', sector: 'Industrials' },
-  { symbol: 'FLTR', name: 'Filter-Pro', sector: 'Industrials' },
-  { symbol: 'GRND', name: 'Grind-Well', sector: 'Industrials' },
-  { symbol: 'HMLT', name: 'Hamlet Machinery', sector: 'Industrials' },
-  { symbol: 'INDM', name: 'Indu-Mech', sector: 'Industrials' },
-  { symbol: 'LOGS', name: 'Logist-X', sector: 'Industrials' },
-  { symbol: 'MOLD', name: 'Mold-Right', sector: 'Industrials' },
-  { symbol: 'NBLD', name: 'Nova-Build', sector: 'Industrials' },
-  { symbol: 'PPR', name: 'Paper-Works', sector: 'Industrials' },
-  { symbol: 'RIVT', name: 'Rivet-Co', sector: 'Industrials' },
-  { symbol: 'SFTY', name: 'Safety-First', sector: 'Industrials' },
-  { symbol: 'TOOL', name: 'Tool-Right', sector: 'Industrials' },
-  { symbol: 'UTIL', name: 'Util-Max', sector: 'Industrials' },
-  { symbol: 'VNT', name: 'Vent-Sys', sector: 'Industrials' },
-  { symbol: 'WRHS', name: 'Ware-House Inc.', sector: 'Industrials' },
-  { symbol: 'XPRT', name: 'X-Port', sector: 'Industrials' },
-  { symbol: 'YACH', name: 'Yacht-Builders', sector: 'Industrials' },
-  { symbol: 'ZINC', name: 'Zinc-Co', sector: 'Industrials' },
-  { symbol: 'CAST', name: 'Cast-Iron Works', sector: 'Industrials' },
-  { symbol: 'DRIL', name: 'Drill-Right', sector: 'Industrials' },
-  { symbol: 'ENGN', name: 'Engi-Pro', sector: 'Industrials' },
-  { symbol: 'FORG', name: 'Forge-Masters', sector: 'Industrials' },
-  { symbol: 'GEAR', name: 'Gear-Works', sector: 'Industrials' },
-  { symbol: 'HVY', name: 'Heavy-Lift', sector: 'Industrials' },
-  { symbol: 'LATH', name: 'Lathe-Masters', sector: 'Industrials' },
-];
+export const STOCK_CONFIG: StockConfig[] = [
+  // Technology
+  { symbol: 'AAPL', name: 'Apple Inc.', sector: 'Technology', region: 'North America', basePrice: 214 },
+  { symbol: 'MSFT', name: 'Microsoft Corp.', sector: 'Technology', region: 'North America', basePrice: 442 },
+  { symbol: 'GOOGL', name: 'Alphabet Inc.', sector: 'Technology', region: 'North America', basePrice: 179 },
+  { symbol: 'AMZN', name: 'Amazon.com, Inc.', sector: 'Technology', region: 'North America', basePrice: 185 },
+  { symbol: 'NVDA', name: 'NVIDIA Corp.', sector: 'Technology', region: 'North America', basePrice: 131 },
+  { symbol: 'META', name: 'Meta Platforms, Inc.', sector: 'Technology', region: 'North America', basePrice: 501 },
+  { symbol: 'TSM', name: 'Taiwan Semiconductor', sector: 'Technology', region: 'Asia', basePrice: 173 },
+  { symbol: 'AVGO', name: 'Broadcom Inc.', sector: 'Technology', region: 'North America', basePrice: 1735 },
+  { symbol: 'ORCL', name: 'Oracle Corp.', sector: 'Technology', region: 'North America', basePrice: 141 },
+  { symbol: 'CRM', name: 'Salesforce, Inc.', sector: 'Technology', region: 'North America', basePrice: 242 },
+  { symbol: 'SAP', name: 'SAP SE', sector: 'Technology', region: 'Europe', basePrice: 194 },
 
-export const STOCK_SYMBOLS = assignRegionsToStocks(BASE_STOCKS);
+  // Health
+  { symbol: 'LLY', name: 'Eli Lilly and Co.', sector: 'Health', region: 'North America', basePrice: 886 },
+  { symbol: 'NVO', name: 'Novo Nordisk A/S', sector: 'Health', region: 'Europe', basePrice: 142 },
+  { symbol: 'JNJ', name: 'Johnson & Johnson', sector: 'Health', region: 'North America', basePrice: 147 },
+  { symbol: 'UNH', name: 'UnitedHealth Group', sector: 'Health', region: 'North America', basePrice: 490 },
+  { symbol: 'MRK', name: 'Merck & Co., Inc.', sector: 'Health', region: 'North America', basePrice: 130 },
+  { symbol: 'AZN', name: 'AstraZeneca PLC', sector: 'Health', region: 'Europe', basePrice: 79 },
+  { symbol: 'PFE', name: 'Pfizer Inc.', sector: 'Health', region: 'North America', basePrice: 28 },
+
+  // Energy
+  { symbol: 'XOM', name: 'Exxon Mobil Corp.', sector: 'Energy', region: 'North America', basePrice: 114 },
+  { symbol: 'CVX', name: 'Chevron Corp.', sector: 'Energy', region: 'North America', basePrice: 157 },
+  { symbol: 'SHEL', name: 'Shell plc', sector: 'Energy', region: 'Europe', basePrice: 68 },
+  { symbol: 'TTE', name: 'TotalEnergies SE', sector: 'Energy', region: 'Europe', basePrice: 67 },
+  { symbol: 'COP', name: 'ConocoPhillips', sector: 'Energy', region: 'North America', basePrice: 111 },
+
+  // Finance
+  { symbol: 'JPM', name: 'JPMorgan Chase & Co.', sector: 'Finance', region: 'North America', basePrice: 196 },
+  { symbol: 'V', name: 'Visa Inc.', sector: 'Finance', region: 'North America', basePrice: 275 },
+  { symbol: 'MA', name: 'Mastercard Inc.', sector: 'Finance', region: 'North America', basePrice: 455 },
+  { symbol: 'BAC', name: 'Bank of America Corp.', sector: 'Finance', region: 'North America', basePrice: 39 },
+  { symbol: 'WFC', name: 'Wells Fargo & Co.', sector: 'Finance', region: 'North America', basePrice: 58 },
+  { symbol: 'HSBC', name: 'HSBC Holdings plc', sector: 'Finance', region: 'Europe', basePrice: 43 },
+  { symbol: 'MUFG', name: 'Mitsubishi UFJ Financial', sector: 'Finance', region: 'Asia', basePrice: 10 },
+
+  // Industrials
+  { symbol: 'CAT', name: 'Caterpillar Inc.', sector: 'Industrials', region: 'North America', basePrice: 328 },
+  { symbol: 'BA', name: 'The Boeing Company', sector: 'Industrials', region: 'North America', basePrice: 177 },
+  { symbol: 'TM', name: 'Toyota Motor Corp.', sector: 'Industrials', region: 'Asia', basePrice: 205 },
+  { symbol: 'SIEGY', name: 'Siemens AG', sector: 'Industrials', region: 'Europe', basePrice: 181 },
+  { symbol: 'UPS', name: 'United Parcel Service', sector: 'Industrials', region: 'North America', basePrice: 137 },
+  { symbol: 'LMT', name: 'Lockheed Martin Corp.', sector: 'Industrials', region: 'North America', basePrice: 468 },
+  { symbol: 'RTX', name: 'RTX Corporation', sector: 'Industrials', region: 'North America', basePrice: 104 },
+
+  // --- Sector ETFs ---
+  { symbol: 'XTC', name: 'Global Tech ETF', sector: 'Technology', isETF: true, basePrice: 100, region: 'Global' },
+  { symbol: 'XHV', name: 'Global Health ETF', sector: 'Health', isETF: true, basePrice: 100, region: 'Global' },
+  { symbol: 'XLE', name: 'Global Energy ETF', sector: 'Energy', isETF: true, basePrice: 100, region: 'Global' },
+  { symbol: 'XLF', name: 'Global Finance ETF', sector: 'Finance', isETF: true, basePrice: 100, region: 'Global' },
+  { symbol: 'XLI', name: 'Global Industrials ETF', sector: 'Industrials', isETF: true, basePrice: 100, region: 'Global' },
+];
 
 export const ICONS = {
     play: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>,
     pause: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h1a1 1 0 001-1V8a1 1 0 00-1-1H8zm3 0a1 1 0 00-1 1v4a1 1 0 001 1h1a1 1 0 001-1V8a1 1 0 00-1-1h-1z" clipRule="evenodd" /></svg>,
-    reset: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 110 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm10.164 9.84a1 1 0 00-1.414-1.414l-1.414 1.414a1 1 0 001.414 1.414l1.414-1.414zM14 16a1 1 0 100 2h- телевизорa1 1 0 100-2h5z" clipRule="evenodd" /></svg>,
+    reset: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 110 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm12 14a1 1 0 01-1-1v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 111.885-.666A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v3a1 1 0 01-1 1z" clipRule="evenodd" /></svg>,
+    resetReal: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M2 11h3v7H2v-7zm4 0h3v7H6v-7zm4-4h3v11h-3V7zm4 4h3v7h-3v-7z" /></svg>
 };
   
 export const SIMULATION_SPEEDS = [
@@ -576,94 +318,143 @@ const createNeuralNetwork = (layerSizes: number[], inputNeuronNames: string[]): 
 const STRATEGY_NAMES = ["Momentum Bot", "Value Seeker", "Quant Algo", "Risk Manager", "Trend Follower", "Contrarian", "Growth Chaser", "Index Follower", "Volatility Trader", "Sector Rotator", "Alpha Hunter"];
 const CHAOS_AGENT_NAMES = ["Noise Trader", "Random Walk Inc.", "Volatility Catalyst", "Chaos Agent", "Momentum Gambler", "Arbitrageur Prime", "The Contrarian", "Market Agitator", "Event Horizon Capital", "Stochastic Dynamics"];
 
-export const buildInvestors = (): InvestorConfig[] => {
+export const buildInvestors = (options: { realisticDemographics?: boolean } = {}): InvestorConfig[] => {
+    const { realisticDemographics = false } = options;
     const aiInvestors: InvestorConfig[] = [];
     const inputLayerSize = INDICATOR_NEURONS.length;
     const totalInvestors = 999;
-    const chaosAgentCount = 10;
 
-    // 1. Generate 999 base AI investors
-    for (let i = 0; i < totalInvestors; i++) {
-        aiInvestors.push({
-            id: `ai-${i + 1}`,
-            name: `AI Trader #${i + 1}`,
-            strategyName: STRATEGY_NAMES[i % STRATEGY_NAMES.length],
-            strategy: {
-                strategyType: 'hyperComplex',
-                network: createNeuralNetwork([inputLayerSize, 10, 5, 1], INDICATOR_NEURONS), // Standard network
-                riskAversion: 0.3 + Math.random() * 0.5, // Confidence threshold: 0.3 to 0.8
-                tradeFrequency: Math.floor(1 + Math.random() * 14), // 1 to 15
-                learningRate: 0.005 + Math.random() * 0.045 // 0.005 to 0.05
-            }
-        });
+    if (!realisticDemographics) {
+        // --- Original Simulation Mode ---
+        for (let i = 0; i < totalInvestors; i++) {
+            aiInvestors.push({
+                id: `ai-${i + 1}`,
+                name: `AI Trader #${i + 1}`,
+                strategyName: STRATEGY_NAMES[i % STRATEGY_NAMES.length],
+                initialCash: AI_INITIAL_INVESTOR_CASH,
+                strategy: {
+                    strategyType: 'hyperComplex',
+                    network: createNeuralNetwork([inputLayerSize, 10, 5, 1], INDICATOR_NEURONS),
+                    riskAversion: 0.3 + Math.random() * 0.5,
+                    tradeFrequency: Math.floor(1 + Math.random() * 14),
+                    learningRate: 0.005 + Math.random() * 0.045
+                }
+            });
+        }
+
+        shuffle(aiInvestors);
+
+        // Create Chaos Agents (10)
+        for (let i = 0; i < 10; i++) {
+            const investor = aiInvestors[totalInvestors - 1 - i];
+            investor.name = `${CHAOS_AGENT_NAMES[i % CHAOS_AGENT_NAMES.length]}`;
+            investor.strategyName = "Randomized Algorithm";
+            investor.strategy = { strategyType: 'random', tradeChance: 0.05 };
+        }
+
+        // Tier Upgrades
+        for (let i = 0; i < 10; i++) { // Advanced
+            aiInvestors[i].name = `Advanced Trader #${i + 1}`;
+            (aiInvestors[i].strategy as HyperComplexInvestorStrategy).network = createNeuralNetwork([inputLayerSize, 15, 10, 5, 1], INDICATOR_NEURONS);
+        }
+        for (let i = 0; i < 5; i++) { // Elite
+            aiInvestors[i].name = `Elite Trader #${i + 1}`;
+            (aiInvestors[i].strategy as HyperComplexInvestorStrategy).network = createNeuralNetwork([inputLayerSize, 20, 15, 10, 5, 1], INDICATOR_NEURONS);
+        }
+        for (let i = 0; i < 3; i++) { // Master
+            aiInvestors[i].name = `Master Trader #${i + 1}`;
+            (aiInvestors[i].strategy as HyperComplexInvestorStrategy).network = createNeuralNetwork([inputLayerSize, 30, 25, 20, 15, 10, 1], INDICATOR_NEURONS);
+        }
+        const oracle = aiInvestors[0]; // Oracle
+        oracle.name = "The Oracle";
+        (oracle.strategy as HyperComplexInvestorStrategy).network = createNeuralNetwork([inputLayerSize, 50, 50, 50, 50, 50, 1], INDICATOR_NEURONS);
+
+    } else {
+        // --- Realistic Demographics Mode ---
+        // 1. Generate base retail investors
+        for (let i = 0; i < totalInvestors; i++) {
+            aiInvestors.push({
+                id: `ai-${i + 1}`,
+                name: `Retail Investor #${i + 1}`,
+                strategyName: "Standard Model",
+                initialCash: 10000 + Math.random() * 90000, // $10k - $100k
+                strategy: {
+                    strategyType: 'hyperComplex',
+                    network: createNeuralNetwork([inputLayerSize, 10, 5, 1], INDICATOR_NEURONS),
+                    riskAversion: 0.5 + Math.random() * 0.4, // Cautious: 0.5 to 0.9
+                    tradeFrequency: Math.floor(5 + Math.random() * 25), // Trades every 5-30 days
+                    learningRate: 0.001 + Math.random() * 0.01 // Slower learners
+                }
+            });
+        }
+
+        shuffle(aiInvestors);
+        let currentIndex = 0;
+
+        // 2. Assign Institutional Roles (Top 5% -> 50 investors)
+        const apexNames = ["Singularity Capital", "Orion Quant Labs", "Titan Global Macro", "Helios Analytics", "Vanguard Prime"];
+        for(let i=0; i<5; i++) { // Apex Predators (0.5%)
+            const investor = aiInvestors[currentIndex++];
+            investor.name = apexNames[i % apexNames.length];
+            investor.strategyName = "Apex Predator Fund";
+            investor.initialCash = 50_000_000 + Math.random() * 150_000_000;
+            const strategy = investor.strategy as HyperComplexInvestorStrategy;
+            strategy.network = createNeuralNetwork([inputLayerSize, 50, 50, 50, 1], INDICATOR_NEURONS);
+            strategy.learningRate = 0.05 + Math.random() * 0.03;
+            strategy.riskAversion = 0.1 + Math.random() * 0.2;
+        }
+        
+        const quantNames = ["Momentum Machines", "Arbitrage Dynamics", "Vector Capital", "Cipher Trading", "Quantum Edge"];
+        for(let i=0; i<15; i++) { // Quant Funds (1.5%)
+             const investor = aiInvestors[currentIndex++];
+            investor.name = `${quantNames[i % quantNames.length]} #${Math.floor(i/quantNames.length)+1}`;
+            investor.strategyName = "Quantitative Hedge Fund";
+            investor.initialCash = 5_000_000 + Math.random() * 20_000_000;
+            const strategy = investor.strategy as HyperComplexInvestorStrategy;
+            strategy.network = createNeuralNetwork([inputLayerSize, 30, 20, 10, 1], INDICATOR_NEURONS);
+            strategy.learningRate = 0.03 + Math.random() * 0.02;
+            strategy.riskAversion = 0.2 + Math.random() * 0.2;
+        }
+        
+        for(let i=0; i<30; i++) { // Boutique Funds (3%)
+             const investor = aiInvestors[currentIndex++];
+            investor.name = `Boutique Fund #${i+1}`;
+            investor.strategyName = "Sector Specialist";
+            investor.initialCash = 500_000 + Math.random() * 4_500_000;
+            const strategy = investor.strategy as HyperComplexInvestorStrategy;
+            strategy.network = createNeuralNetwork([inputLayerSize, 20, 10, 1], INDICATOR_NEURONS);
+            strategy.learningRate = 0.01 + Math.random() * 0.02;
+            strategy.riskAversion = 0.3 + Math.random() * 0.2;
+        }
+
+        // 3. Assign Noise Trader Role (10% -> 99 investors)
+        for(let i=0; i<99; i++) {
+             const investor = aiInvestors[currentIndex++];
+             investor.name = `${CHAOS_AGENT_NAMES[i % CHAOS_AGENT_NAMES.length]}`;
+             investor.strategyName = "Randomized Algorithm";
+             investor.initialCash = 5000 + Math.random() * 20000;
+             investor.strategy = {
+                strategyType: 'random',
+                tradeChance: 0.10
+             };
+        }
+        
+        // 4. The remaining ~850 investors are the default retail traders.
+        const retailNames = ["Trend Follower", "Value Seeker", "Growth Chaser", "Retirement Fund", "Day Trader"];
+        while(currentIndex < totalInvestors) {
+            const investor = aiInvestors[currentIndex++];
+            investor.strategyName = retailNames[currentIndex % retailNames.length];
+        }
     }
 
-    // 2. Shuffle to pick random investors for upgrades and changes
-    shuffle(aiInvestors);
-
-    // 3. Create Chaos Agents (Random Traders)
-    for (let i = 0; i < chaosAgentCount; i++) {
-        const investor = aiInvestors[totalInvestors - 1 - i]; // Pick from the end of the shuffled list
-        investor.name = `${CHAOS_AGENT_NAMES[i % CHAOS_AGENT_NAMES.length]}`;
-        investor.strategyName = "Randomized Algorithm";
-        investor.strategy = {
-            strategyType: 'random',
-            tradeChance: 0.05 // 5% chance to trade any given stock each day
-        };
-    }
-
-    // 4. Upgrade Tiers
-    // Tier 2: 10 Advanced Traders
-    for (let i = 0; i < 10; i++) {
-        const investor = aiInvestors[i];
-        investor.name = `Advanced Trader #${i + 1}`;
-        investor.strategyName = "Advanced Quantitative Strategy";
-        const strategy = investor.strategy as HyperComplexInvestorStrategy;
-        strategy.network = createNeuralNetwork([inputLayerSize, 15, 10, 5, 1], INDICATOR_NEURONS);
-        strategy.learningRate *= 1.2; // Slightly faster learner
-        strategy.riskAversion *= 0.9; // Slightly more risk-taking
-    }
-
-    // Tier 3: 5 Elite Traders (from the advanced 10)
-    for (let i = 0; i < 5; i++) {
-        const investor = aiInvestors[i];
-        investor.name = `Elite Trader #${i + 1}`;
-        investor.strategyName = "Elite Deep Learning Fund";
-        const strategy = investor.strategy as HyperComplexInvestorStrategy;
-        strategy.network = createNeuralNetwork([inputLayerSize, 20, 15, 10, 5, 1], INDICATOR_NEURONS);
-        strategy.learningRate *= 1.2;
-        strategy.riskAversion *= 0.9;
-    }
-
-    // Tier 4: 3 Master Traders (from the elite 5)
-    for (let i = 0; i < 3; i++) {
-        const investor = aiInvestors[i];
-        investor.name = `Master Trader #${i + 1}`;
-        investor.strategyName = "Grandmaster Algorithmic Trading";
-        const strategy = investor.strategy as HyperComplexInvestorStrategy;
-        strategy.network = createNeuralNetwork([inputLayerSize, 30, 25, 20, 15, 10, 1], INDICATOR_NEURONS);
-        strategy.learningRate *= 1.2;
-        strategy.riskAversion *= 0.9;
-    }
-
-    // Tier 5: The Oracle (from the master 3)
-    const oracle = aiInvestors[0];
-    oracle.name = "The Oracle";
-    oracle.strategyName = "Singularity Fund";
-    const oracleStrategy = oracle.strategy as HyperComplexInvestorStrategy;
-    // A 7-layer network: 1 input, 5 hidden layers of 50 neurons, 1 output layer
-    oracleStrategy.network = createNeuralNetwork([inputLayerSize, 50, 50, 50, 50, 50, 1], INDICATOR_NEURONS); 
-    oracleStrategy.learningRate = 0.08; // Max learning rate
-    oracleStrategy.riskAversion = 0.1; // Very aggressive, lower threshold
-
-    // 5. Sort by ID to have a consistent order and add Human player
     aiInvestors.sort((a,b) => parseInt(a.id.split('-')[1]) - parseInt(b.id.split('-')[1]));
     
     const humanPlayer: InvestorConfig = {
         id: 'human-player',
         name: 'Human Player',
         isHuman: true,
-        strategy: { // Placeholder strategy for the human player
+        initialCash: HUMAN_INITIAL_INVESTOR_CASH,
+        strategy: {
             strategyType: 'random',
             tradeChance: 0
         }

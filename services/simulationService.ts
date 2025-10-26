@@ -1,6 +1,6 @@
 
 import { SimulationState, Stock, Investor, SimplePriceDataPoint, PortfolioItem, ShareLot, ActiveEvent, HyperComplexInvestorStrategy, TrackedCorporateAction, OHLCDataPoint, Region, TrackedGeneratedArticle, RandomInvestorStrategy, MicroLLM } from '../types';
-import { STOCK_SYMBOLS, MIN_INITIAL_STOCK_PRICE, MAX_INITIAL_STOCK_PRICE, INITIAL_HISTORY_LENGTH, HUMAN_INITIAL_INVESTOR_CASH, AI_INITIAL_INVESTOR_CASH, buildInvestors, INFLATION_RATE, TAX_CONSTANTS, CORPORATE_EVENTS_BY_SECTOR, MACRO_EVENTS, WASHINGTON_B_AND_O_TAX_RATES_BY_SECTOR, MIN_CORPORATE_ACTION_INTERVAL, CORPORATE_ACTION_INTERVAL_RANGE, MIN_STOCK_SPLIT_PRICE, INDICATOR_NEURONS, CORPORATE_NEURONS } from '../constants';
+import { STOCK_CONFIG, MIN_INITIAL_STOCK_PRICE, MAX_INITIAL_STOCK_PRICE, INITIAL_HISTORY_LENGTH, HUMAN_INITIAL_INVESTOR_CASH, buildInvestors, INFLATION_RATE, TAX_CONSTANTS, CORPORATE_EVENTS_BY_SECTOR, MACRO_EVENTS, WASHINGTON_B_AND_O_TAX_RATES_BY_SECTOR, MIN_CORPORATE_ACTION_INTERVAL, CORPORATE_ACTION_INTERVAL_RANGE, MIN_STOCK_SPLIT_PRICE, INDICATOR_NEURONS, CORPORATE_NEURONS, generateRandomStock } from '../constants';
 import { getImageForEvent } from './imageService';
 import { generateNewsArticle, createMicroLLM, learnFromArticleOutcome, refineLLMWithCorpus } from './newsGenerationService';
 import { NeuralNetwork } from './neuralNetwork';
@@ -36,14 +36,37 @@ const createCorporateNNs = (): { splitNN: NeuralNetwork, allianceNN: NeuralNetwo
     };
 };
 
-export const initializeState = (): SimulationState => {
+export const initializeState = (options: { useRealPrices?: boolean, realisticDemographics?: boolean } = {}): SimulationState => {
+  const { useRealPrices = false, realisticDemographics = false } = options;
   const startDate = new Date('2024-01-01T09:30:00Z');
-  const stocks: Stock[] = STOCK_SYMBOLS.map(s => {
-    const initialPrice = MIN_INITIAL_STOCK_PRICE + Math.random() * (MAX_INITIAL_STOCK_PRICE - MIN_INITIAL_STOCK_PRICE);
+  
+  const regularStockConfigs = STOCK_CONFIG.filter(s => !s.isETF);
+  const etfConfigs = STOCK_CONFIG.filter(s => s.isETF);
+  
+  const usedSymbols = new Set<string>(STOCK_CONFIG.map(s => s.symbol));
+
+  const regularStocks: Stock[] = regularStockConfigs.map(s_config => {
+    const initialPrice = useRealPrices 
+        ? s_config.basePrice
+        : MIN_INITIAL_STOCK_PRICE + Math.random() * (MAX_INITIAL_STOCK_PRICE - MIN_INITIAL_STOCK_PRICE);
+    
+    let name = s_config.name;
+    let symbol = s_config.symbol;
+
+    if (!useRealPrices) {
+        const { randomName, randomSymbol } = generateRandomStock(usedSymbols);
+        name = randomName;
+        symbol = randomSymbol;
+        usedSymbols.add(symbol);
+    }
+    
     const history = generateInitialHistory(INITIAL_HISTORY_LENGTH, initialPrice);
     const { splitNN, allianceNN, acquisitionNN } = createCorporateNNs();
     return {
-      ...s,
+      symbol: symbol,
+      name: name,
+      sector: s_config.sector,
+      region: s_config.region,
       history,
       corporateAI: {
           nextCorporateActionDay: INITIAL_HISTORY_LENGTH + MIN_CORPORATE_ACTION_INTERVAL + Math.floor(Math.random() * CORPORATE_ACTION_INTERVAL_RANGE),
@@ -58,9 +81,57 @@ export const initializeState = (): SimulationState => {
     };
   });
   
-  const INVESTORS_CONFIG = buildInvestors();
+  const etfs: Stock[] = etfConfigs.map(s => {
+    const etfSharesOutstanding = 1_000_000_000;
+    const history: OHLCDataPoint[] = [];
+    const underlyingStocks = regularStocks.filter(rs => rs.sector === s.sector);
+
+    let finalHoldings: { symbol: string; name: string; weight: number }[] = [];
+    let finalEps = 0;
+
+    for (let i = 0; i < INITIAL_HISTORY_LENGTH; i++) {
+        const { totalMarketCap, totalEarnings, totalVolume } = underlyingStocks.reduce((acc, stock) => {
+            const price = stock.history[i]?.close ?? 0;
+            const marketCap = price * stock.sharesOutstanding;
+            const earnings = stock.eps ? stock.sharesOutstanding * stock.eps : 0;
+            acc.totalMarketCap += marketCap;
+            acc.totalEarnings += earnings;
+            acc.totalVolume += stock.history[i]?.volume ?? 0;
+            return acc;
+        }, { totalMarketCap: 0, totalEarnings: 0, totalVolume: 0 });
+        
+        const close = totalMarketCap > 0 ? totalMarketCap / etfSharesOutstanding : 100;
+        history.push({ day: i + 1, open: close, high: close, low: close, close, volume: Math.round(totalVolume) });
+        
+        if (i === INITIAL_HISTORY_LENGTH - 1) {
+            finalHoldings = underlyingStocks.map(stock => ({
+                symbol: stock.symbol,
+                name: stock.name,
+                weight: totalMarketCap > 0 ? (stock.history[i]?.close * stock.sharesOutstanding) / totalMarketCap : 0
+            })).sort((a, b) => b.weight - a.weight);
+            finalEps = totalEarnings / etfSharesOutstanding;
+        }
+    }
+
+    return {
+      symbol: s.symbol,
+      name: s.name,
+      sector: s.sector,
+      region: s.region,
+      isETF: true,
+      history,
+      sharesOutstanding: etfSharesOutstanding,
+      isDelisted: false,
+      holdings: finalHoldings,
+      eps: finalEps,
+    };
+  });
+
+  const stocks: Stock[] = [...regularStocks, ...etfs];
+  
+  const INVESTORS_CONFIG = buildInvestors({ realisticDemographics });
   const investors: Investor[] = INVESTORS_CONFIG.map(config => {
-    const initialCash = config.isHuman ? HUMAN_INITIAL_INVESTOR_CASH : AI_INITIAL_INVESTOR_CASH;
+    const initialCash = config.initialCash;
     return {
         ...config,
         cash: initialCash,
@@ -99,6 +170,41 @@ export const initializeState = (): SimulationState => {
     microLLM: createMicroLLM(),
     trackedArticles: [],
   };
+};
+
+const updateETFValues = (state: SimulationState, dayIndex: number): void => {
+    const etfs = state.stocks.filter(s => s.isETF);
+    const regularStocks = state.stocks.filter(s => !s.isETF && !s.isDelisted);
+
+    etfs.forEach(etf => {
+        const underlyingStocks = regularStocks.filter(s => s.sector === etf.sector);
+        if (underlyingStocks.length === 0) return;
+
+        const { totalMarketCap, totalEarnings, totalVolume } = underlyingStocks.reduce((acc, stock) => {
+            const price = stock.history[dayIndex]?.close ?? 0;
+            const marketCap = price * stock.sharesOutstanding;
+            const earnings = stock.eps ? stock.sharesOutstanding * stock.eps : 0;
+            acc.totalMarketCap += marketCap;
+            acc.totalEarnings += earnings;
+            acc.totalVolume += stock.history[dayIndex]?.volume ?? 0;
+            return acc;
+        }, { totalMarketCap: 0, totalEarnings: 0, totalVolume: 0 });
+
+        const etfHistoryEntry = etf.history[dayIndex];
+        if (etfHistoryEntry) {
+            etfHistoryEntry.close = totalMarketCap / etf.sharesOutstanding;
+            etfHistoryEntry.high = Math.max(etfHistoryEntry.high, etfHistoryEntry.close);
+            etfHistoryEntry.low = Math.min(etfHistoryEntry.low, etfHistoryEntry.close);
+            etfHistoryEntry.volume = totalVolume; // Reflect sum of underlying volumes
+        }
+        
+        etf.eps = totalEarnings / etf.sharesOutstanding;
+        etf.holdings = underlyingStocks.map(stock => ({
+            symbol: stock.symbol,
+            name: stock.name,
+            weight: totalMarketCap > 0 ? (stock.history[dayIndex]?.close * stock.sharesOutstanding) / totalMarketCap : 0
+        })).sort((a, b) => b.weight - a.weight);
+    });
 };
 
 // --- Technical Indicator Calculations ---
@@ -414,7 +520,7 @@ const evaluateCorporateActionsAndLearn = (state: SimulationState): void => {
         }
 
         const stock = state.stocks.find(s => s.symbol === action.stockSymbol);
-        if (!stock || stock.isDelisted) return;
+        if (!stock || stock.isDelisted || !stock.corporateAI) return;
 
         const currentStockPrice = stock.history.slice(-1)[0].close;
         const stockReturn = currentStockPrice / action.startingStockPrice;
@@ -486,6 +592,8 @@ export const isMarketOpen = (time: Date, region: Region): boolean => {
             const isMorningSession = hours >= 0.0 && hours < 2.5;
             const isAfternoonSession = hours >= 3.5 && hours < (6 + 25/60);
             return isMorningSession || isAfternoonSession;
+        case 'Global': // ETFs can trade when any major market is open
+            return isMarketOpen(time, 'North America') || isMarketOpen(time, 'Europe') || isMarketOpen(time, 'Asia');
         default:
             return false;
     }
@@ -627,7 +735,7 @@ const runMarketTick = (state: SimulationState, durationHours: number, currentTim
     }
 
     state.stocks.forEach(stock => {
-        if(stock.isDelisted) return;
+        if(stock.isDelisted || stock.isETF) return;
         
         const currentDayEntry = stock.history[stock.history.length - 1];
         let currentPrice = currentDayEntry.close;
@@ -655,6 +763,8 @@ const runMarketTick = (state: SimulationState, durationHours: number, currentTim
         currentDayEntry.low = Math.min(currentDayEntry.low, finalPrice);
         currentDayEntry.volume += Math.round((tickTradeVolumes[stock.symbol] || 0));
     });
+    
+    updateETFValues(state, state.stocks[0].history.length - 1);
     
     return state;
 }
@@ -743,7 +853,7 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
     
     // Iterate through each stock to check for corporate-level events.
     for (const stock of state.stocks) {
-        if (stock.isDelisted) continue;
+        if (stock.isDelisted || !stock.corporateAI) continue;
         
         let actionTaken = false;
         // Check if a corporate AI-driven action is scheduled.
@@ -762,7 +872,7 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
                 // The split directly affects stock properties.
                 stock.sharesOutstanding *= ratio;
                 stock.history.forEach(h => { h.open /= ratio; h.high /= ratio; h.low /= ratio; h.close /= ratio; });
-                stock.eps /= ratio;
+                if (stock.eps) stock.eps /= ratio;
                 state.trackedCorporateActions.push({ startDay: nextDay, evaluationDay: nextDay + 60, stockSymbol: stock.symbol, actionType: 'split', indicatorValuesAtAction: indicatorValues, startingStockPrice: currentPrice / ratio, startingMarketIndex: currentMarketIndex });
             } else {
                 // The corporate AI evaluates forming an alliance.
@@ -845,7 +955,7 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
         
         // Apply the calculated impact to each stock's daily impact multiplier.
         state.stocks.forEach(stock => {
-            if (!stock.isDelisted) {
+            if (!stock.isDelisted && !stock.isETF) {
                 dailyImpacts[stock.symbol] *= applyMacroImpact(stock, state.activeEvent!);
             }
         });
@@ -853,11 +963,13 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
 
     // Finally, apply all accumulated daily impacts (from macro and corporate events) to the stock prices.
     state.stocks.forEach(stock => {
-        if (!stock.isDelisted && dailyImpacts[stock.symbol] !== 1.0) {
+        if (!stock.isDelisted && !stock.isETF && dailyImpacts[stock.symbol] !== 1.0) {
             const currentDayEntry = stock.history[stock.history.length - 1];
             currentDayEntry.close = Math.max(0.01, currentDayEntry.close * dailyImpacts[stock.symbol]);
         }
     });
+
+    updateETFValues(state, state.stocks[0].history.length - 1);
 
     return state;
 }
@@ -877,10 +989,12 @@ export const advanceTime = (prevState: SimulationState, secondsToAdvance: number
       }
   });
   state.stocks.forEach(stock => {
-      const originalAI = prevState.stocks.find(s => s.symbol === stock.symbol)!.corporateAI;
-      stock.corporateAI.splitNN = Object.assign(new NeuralNetwork([]), originalAI.splitNN);
-      stock.corporateAI.allianceNN = Object.assign(new NeuralNetwork([]), originalAI.allianceNN);
-      stock.corporateAI.acquisitionNN = Object.assign(new NeuralNetwork([]), originalAI.acquisitionNN);
+      if(stock.corporateAI) {
+        const originalAI = prevState.stocks.find(s => s.symbol === stock.symbol)!.corporateAI!;
+        stock.corporateAI.splitNN = Object.assign(new NeuralNetwork([]), originalAI.splitNN);
+        stock.corporateAI.allianceNN = Object.assign(new NeuralNetwork([]), originalAI.allianceNN);
+        stock.corporateAI.acquisitionNN = Object.assign(new NeuralNetwork([]), originalAI.acquisitionNN);
+      }
   });
   // The new MicroLLM is pure data, no need to re-instantiate classes.
 

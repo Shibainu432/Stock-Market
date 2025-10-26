@@ -40,7 +40,7 @@ export interface CorporateAI {
     learningRate: number;
 }
 
-export type Region = 'North America' | 'Europe' | 'Asia';
+export type Region = 'North America' | 'Europe' | 'Asia' | 'Global';
 
 export interface Stock {
   symbol: string;
@@ -48,10 +48,12 @@ export interface Stock {
   sector: string;
   region: Region;
   history: OHLCDataPoint[];
-  corporateAI: CorporateAI;
+  corporateAI?: CorporateAI;
   isDelisted?: boolean;
   sharesOutstanding: number;
-  eps: number; // Earnings Per Share
+  eps?: number;
+  isETF?: boolean;
+  holdings?: { symbol: string; name: string; weight: number }[];
 }
 
 export interface ShareLot {

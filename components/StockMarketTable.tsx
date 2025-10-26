@@ -72,7 +72,12 @@ const StockMarketTable: React.FC<StockMarketTableProps> = ({ stocks, onSelectSto
                                     onClick={() => onSelectStock(stock.symbol)} 
                                     className="bg-gray-800 border-b border-gray-700/50 hover:bg-gray-700/50 cursor-pointer"
                                 >
-                                    <td className="px-4 py-2 font-bold text-accent hover:underline">{stock.symbol}</td>
+                                    <td className="px-4 py-2 font-bold text-accent hover:underline">
+                                        <div className="flex items-center gap-2">
+                                            {stock.symbol}
+                                            {stock.isETF && <span className="text-xs bg-gray-600 text-gray-300 font-bold py-0.5 px-1.5 rounded-full">ETF</span>}
+                                        </div>
+                                    </td>
                                     <td className="px-4 py-2 text-gray-300 truncate max-w-xs">{stock.name}</td>
                                     <td className="px-4 py-2">
                                         <div className="h-8 w-24 mx-auto">

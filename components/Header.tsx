@@ -13,6 +13,7 @@ interface HeaderProps {
     isRunning: boolean;
     onPlayPause: () => void;
     onReset: () => void;
+    onResetWithRealData: () => void;
     speed: number;
     onSpeedChange: (speed: number) => void;
     searchQuery: string;
@@ -91,6 +92,7 @@ const Header: React.FC<HeaderProps> = (props) => {
                             isRunning={props.isRunning}
                             onPlayPause={props.onPlayPause}
                             onReset={props.onReset}
+                            onResetWithRealData={props.onResetWithRealData}
                             speed={props.speed}
                             onSpeedChange={props.onSpeedChange}
                         />
