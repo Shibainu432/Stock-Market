@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { SimulationState, Stock, Investor, Page } from './types';
+import { SimulationState, Stock, Investor, Page, TaxJurisdiction } from './types';
 import { initializeState, advanceTime, playerBuyStock, playerSellStock } from './services/simulationService';
 import { SIMULATION_SPEEDS } from './constants';
 import DetailedStockView from './components/DetailedStockView';
@@ -120,6 +120,19 @@ const App: React.FC = () => {
     setWorldClockCount(count);
   }, []);
 
+  const handlePlayerJurisdictionChange = useCallback((jurisdiction: TaxJurisdiction) => {
+    setSimulationState(prevState => {
+        if (!prevState) return null;
+        const newInvestors = prevState.investors.map(inv => {
+            if (inv.isHuman) {
+                return { ...inv, jurisdiction };
+            }
+            return inv;
+        });
+        return { ...prevState, investors: newInvestors };
+    });
+  }, []);
+
 
   const activeStocks = useMemo(() => simulationState?.stocks.filter(s => !s.isDelisted) || [], [simulationState?.stocks]);
 
@@ -168,6 +181,7 @@ const App: React.FC = () => {
                 player={humanPlayer!}
                 stocks={activeStocks}
                 onSelectStock={handleSelectStock}
+                onJurisdictionChange={handlePlayerJurisdictionChange}
             />
         case 'markets':
             return <MarketsPage 

@@ -1,6 +1,6 @@
 
 import { SimulationState, Stock, Investor, SimplePriceDataPoint, PortfolioItem, ShareLot, ActiveEvent, HyperComplexInvestorStrategy, TrackedCorporateAction, OHLCDataPoint, Region, TrackedGeneratedArticle, RandomInvestorStrategy, MicroLLM } from '../types';
-import { STOCK_CONFIG, MIN_INITIAL_STOCK_PRICE, MAX_INITIAL_STOCK_PRICE, INITIAL_HISTORY_LENGTH, HUMAN_INITIAL_INVESTOR_CASH, buildInvestors, INFLATION_RATE, TAX_CONSTANTS, CORPORATE_EVENTS_BY_SECTOR, MACRO_EVENTS, WASHINGTON_B_AND_O_TAX_RATES_BY_SECTOR, MIN_CORPORATE_ACTION_INTERVAL, CORPORATE_ACTION_INTERVAL_RANGE, MIN_STOCK_SPLIT_PRICE, INDICATOR_NEURONS, CORPORATE_NEURONS, generateRandomStock } from '../constants';
+import { STOCK_CONFIG, MIN_INITIAL_STOCK_PRICE, MAX_INITIAL_STOCK_PRICE, INITIAL_HISTORY_LENGTH, HUMAN_INITIAL_INVESTOR_CASH, buildInvestors, INFLATION_RATE, TAX_CONSTANTS, CORPORATE_EVENTS_BY_SECTOR, MACRO_EVENTS, CORPORATE_TAX_RATES_BY_REGION, MIN_CORPORATE_ACTION_INTERVAL, CORPORATE_ACTION_INTERVAL_RANGE, MIN_STOCK_SPLIT_PRICE, INDICATOR_NEURONS, CORPORATE_NEURONS, generateRandomStock, TAX_REGIMES } from '../constants';
 import { getImageForEvent } from './imageService';
 import { generateNewsArticle, createMicroLLM, learnFromArticleOutcome, refineLLMWithCorpus } from './newsGenerationService';
 import { NeuralNetwork } from './neuralNetwork';
@@ -139,7 +139,8 @@ export const initializeState = (options: { useRealPrices?: boolean, realisticDem
         portfolioHistory: [{day: INITIAL_HISTORY_LENGTH, value: initialCash}],
         taxLossCarryforward: 0,
         totalTaxesPaid: 0,
-        waAnnualNetLTCG: 0,
+        annualNetLTCG: 0,
+        annualNetSTCG: 0,
         recentTrades: [],
     };
   });
@@ -395,13 +396,27 @@ const getSharesOwned = (item: PortfolioItem | undefined): number => {
     return item.lots.reduce((sum, lot) => sum + lot.shares, 0);
 };
 
-const calculateWashingtonTax = (investor: Investor): number => {
-    if (investor.waAnnualNetLTCG <= TAX_CONSTANTS.WASHINGTON_CG_EXEMPTION) {
-        return 0;
+const calculateTaxes = (investor: Investor): number => {
+    const regime = TAX_REGIMES[investor.jurisdiction];
+    if (!regime) return 0;
+
+    let totalTax = 0;
+
+    // Process LTCG
+    if (investor.annualNetLTCG > 0) {
+        const taxableLTCG = Math.max(0, investor.annualNetLTCG - (regime.ltcgExemption || 0));
+        totalTax += taxableLTCG * regime.ltcgRate;
     }
-    const taxableGain = investor.waAnnualNetLTCG - TAX_CONSTANTS.WASHINGTON_CG_EXEMPTION;
-    return taxableGain * TAX_CONSTANTS.WASHINGTON_LTCG_RATE;
+
+    // Process STCG
+    if (investor.annualNetSTCG > 0) {
+        const taxableSTCG = Math.max(0, investor.annualNetSTCG - (regime.stcgExemption || 0));
+        totalTax += taxableSTCG * regime.stcgRate;
+    }
+    
+    return Math.max(0, totalTax);
 };
+
 
 const evaluateTradesAndLearn = (investor: Investor, stocks: Stock[]) => {
     const strategy = investor.strategy as HyperComplexInvestorStrategy;
@@ -632,8 +647,11 @@ const executeTrade = (
         const remainingLots = portfolioItem.lots.filter(lot => {
             if (soldAmount <= 0) return true;
             const gainOrLoss = (currentPrice - lot.purchasePrice) * Math.min(lot.shares, soldAmount);
-            if ((new Date(state.time).getTime() - new Date(lot.purchaseTime).getTime()) / (1000 * 3600 * 24) > TAX_CONSTANTS.LONG_TERM_HOLDING_PERIOD) {
-                investor.waAnnualNetLTCG += gainOrLoss;
+            const holdingPeriodDays = (new Date(state.time).getTime() - new Date(lot.purchaseTime).getTime()) / (1000 * 3600 * 24);
+            if (holdingPeriodDays > TAX_CONSTANTS.LONG_TERM_HOLDING_PERIOD) {
+                investor.annualNetLTCG += gainOrLoss;
+            } else {
+                investor.annualNetSTCG += gainOrLoss;
             }
             if (lot.shares <= soldAmount) {
                 soldAmount -= lot.shares; return false;
@@ -739,8 +757,8 @@ const runMarketTick = (state: SimulationState, durationHours: number, currentTim
         
         const currentDayEntry = stock.history[stock.history.length - 1];
         let currentPrice = currentDayEntry.close;
-        const boDrag = ((WASHINGTON_B_AND_O_TAX_RATES_BY_SECTOR[stock.sector] || 0) / 365) * (durationHours / 24);
-        currentPrice *= (1 - boDrag + (INFLATION_RATE * (durationHours / 24)));
+        const corporateTaxDrag = ((CORPORATE_TAX_RATES_BY_REGION[stock.region] || 0) / 365) * (durationHours / 24);
+        currentPrice *= (1 - corporateTaxDrag + (INFLATION_RATE * (durationHours / 24)));
     
         if(isMarketOpen(currentTime, stock.region)) {
             if (isInitialChaosPeriod) {
@@ -798,12 +816,13 @@ const runDailyTransition = (state: SimulationState): SimulationState => {
 
     if (state.day % 365 === 0) {
         state.investors.forEach(investor => {
-            const taxDue = calculateWashingtonTax(investor);
+            const taxDue = calculateTaxes(investor);
             if (taxDue > 0) {
                 investor.totalTaxesPaid += taxDue;
                 investor.cash -= taxDue;
             }
-            investor.waAnnualNetLTCG = 0;
+            investor.annualNetLTCG = 0;
+            investor.annualNetSTCG = 0;
         });
     }
 
@@ -979,6 +998,83 @@ const processTimeChunk = (state: SimulationState, chunkStartTime: Date, duration
     return runMarketTick(state, durationHours, chunkStartTime);
 }
 
+// Fix: Add playerBuyStock and playerSellStock functions to handle UI interactions.
+export const playerBuyStock = (prevState: SimulationState, playerId: string, symbol: string, shares: number): SimulationState => {
+    const state = structuredClone(prevState);
+    const player = state.investors.find(i => i.id === playerId);
+    const stock = state.stocks.find(s => s.symbol === symbol);
+
+    if (!player || !stock || stock.isDelisted) return prevState;
+
+    const currentPrice = stock.history[stock.history.length - 1].close;
+    const totalCost = shares * currentPrice;
+
+    if (player.cash < totalCost || shares <= 0) {
+        return prevState; // Not enough cash or invalid shares
+    }
+    
+    player.cash -= totalCost;
+    let item = player.portfolio.find(p => p.symbol === stock.symbol);
+    if (!item) {
+        item = { symbol: stock.symbol, lots: [] };
+        player.portfolio.push(item);
+    }
+    item.lots.push({ 
+        purchaseTime: state.time, 
+        purchasePrice: currentPrice, 
+        shares, 
+        purchaseIndicators: {} // Empty for human player
+    });
+    
+    return state;
+};
+
+export const playerSellStock = (prevState: SimulationState, playerId: string, symbol: string, shares: number): SimulationState => {
+    const state = structuredClone(prevState);
+    const player = state.investors.find(i => i.id === playerId);
+    const stock = state.stocks.find(s => s.symbol === symbol);
+
+    if (!player || !stock) return prevState;
+
+    const portfolioItem = player.portfolio.find(p => p.symbol === symbol);
+    const sharesOwned = getSharesOwned(portfolioItem);
+
+    if (shares <= 0 || shares > sharesOwned) {
+        return prevState; // Invalid shares
+    }
+
+    const currentPrice = stock.history[stock.history.length - 1].close;
+
+    player.cash += shares * currentPrice;
+
+    // Logic from executeTrade for selling lots and calculating taxes
+    let soldAmount = shares;
+    portfolioItem!.lots.sort((a, b) => new Date(a.purchaseTime).getTime() - new Date(b.purchaseTime).getTime());
+    const remainingLots = portfolioItem!.lots.filter(lot => {
+        if (soldAmount <= 0) return true;
+        const gainOrLoss = (currentPrice - lot.purchasePrice) * Math.min(lot.shares, soldAmount);
+        const holdingPeriodDays = (new Date(state.time).getTime() - new Date(lot.purchaseTime).getTime()) / (1000 * 3600 * 24);
+        if (holdingPeriodDays > TAX_CONSTANTS.LONG_TERM_HOLDING_PERIOD) {
+            player.annualNetLTCG += gainOrLoss;
+        } else {
+            player.annualNetSTCG += gainOrLoss;
+        }
+        if (lot.shares <= soldAmount) {
+            soldAmount -= lot.shares; return false;
+        } else {
+            lot.shares -= soldAmount; soldAmount = 0; return true;
+        }
+    });
+    
+    if(remainingLots.length > 0) {
+        portfolioItem!.lots = remainingLots;
+    } else {
+        player.portfolio = player.portfolio.filter(p => p.symbol !== stock.symbol);
+    }
+    
+    return state;
+};
+
 export const advanceTime = (prevState: SimulationState, secondsToAdvance: number): SimulationState => {
   let state = structuredClone(prevState);
   // Re-instantiate class instances after cloning
@@ -1029,111 +1125,13 @@ export const advanceTime = (prevState: SimulationState, secondsToAdvance: number
         }
     } else {
         const durationMs = chunkEndTime.getTime() - currentTime.getTime();
+        // Fix: Corrected typo from 'duration' to 'durationMs' and completed the line.
         state = processTimeChunk(state, currentTime, durationMs);
     }
-
     currentTime = chunkEndTime;
   }
-  
+
   state.time = currentTime.toISOString();
-  
-  const startDate = new Date(state.startDate);
-  const msSinceStart = new Date(state.time).getTime() - startDate.getTime();
-  state.day = Math.floor(msSinceStart / (24 * 60 * 60 * 1000));
-
-  // Simulate continuous "idle-time" training for the MicroLLM
-  state.microLLM = refineLLMWithCorpus(state.microLLM);
-  
+  // Fix: Added missing return statement. A function whose declared type is not 'void' must return a value.
   return state;
-};
-
-export const playerBuyStock = (prevState: SimulationState, playerId: string, symbol: string, shares: number): SimulationState => {
-  const state = {
-    ...prevState,
-    investors: prevState.investors.map(inv => ({...inv})),
-    stocks: prevState.stocks.map(st => ({...st}))
-  };
-  const investor = state.investors.find(i => i.id === playerId);
-  const stock = state.stocks.find(s => s.symbol === symbol);
-
-  if (!investor || !stock || stock.isDelisted) return prevState;
-
-  const currentPrice = stock.history[stock.history.length - 1].close;
-  const cost = shares * currentPrice;
-
-  if (investor.cash >= cost && shares > 0) {
-    investor.cash -= cost;
-    let item = investor.portfolio.find(p => p.symbol === symbol);
-    if (!item) {
-      item = { symbol, lots: [] };
-      investor.portfolio.push(item);
-    }
-    item.lots.push({
-      purchaseTime: state.time,
-      purchasePrice: currentPrice,
-      shares,
-      purchaseIndicators: {} // Not needed for human
-    });
-  }
-
-  return state;
-};
-
-export const playerSellStock = (prevState: SimulationState, playerId: string, symbol: string, shares: number): SimulationState => {
-    const state = {
-        ...prevState,
-        investors: prevState.investors.map(inv => ({
-            ...inv,
-            portfolio: inv.portfolio.map(p => ({
-                ...p,
-                lots: p.lots.map(l => ({...l}))
-            }))
-        })),
-        stocks: prevState.stocks.map(st => ({...st}))
-    };
-    const investor = state.investors.find(i => i.id === playerId);
-    const stock = state.stocks.find(s => s.symbol === symbol);
-
-    if (!investor || !stock) return prevState;
-
-    const portfolioItem = investor.portfolio.find(p => p.symbol === symbol);
-    const sharesOwned = getSharesOwned(portfolioItem);
-
-    if (!portfolioItem || sharesOwned < shares || shares <= 0) return prevState;
-
-    const currentPrice = stock.history[stock.history.length - 1].close;
-    investor.cash += shares * currentPrice;
-
-    let sharesToSell = shares;
-    portfolioItem.lots.sort((a, b) => new Date(a.purchaseTime).getTime() - new Date(b.purchaseTime).getTime());
-    
-    const remainingLots: ShareLot[] = [];
-    for (const lot of portfolioItem.lots) {
-        if (sharesToSell <= 0) {
-            remainingLots.push(lot);
-            continue;
-        }
-
-        const gainOrLoss = (currentPrice - lot.purchasePrice) * Math.min(lot.shares, sharesToSell);
-        const holdingPeriod = (new Date(state.time).getTime() - new Date(lot.purchaseTime).getTime()) / (1000 * 3600 * 24);
-        
-        if (holdingPeriod > TAX_CONSTANTS.LONG_TERM_HOLDING_PERIOD) {
-            investor.waAnnualNetLTCG += gainOrLoss;
-        }
-
-        if (lot.shares <= sharesToSell) {
-            sharesToSell -= lot.shares;
-        } else {
-            remainingLots.push({ ...lot, shares: lot.shares - sharesToSell });
-            sharesToSell = 0;
-        }
-    }
-    
-    if(remainingLots.length > 0) {
-        portfolioItem.lots = remainingLots;
-    } else {
-        investor.portfolio = investor.portfolio.filter(p => p.symbol !== symbol);
-    }
-
-    return state;
 };

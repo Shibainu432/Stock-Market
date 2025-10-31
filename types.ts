@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { NeuralNetwork } from './services/neuralNetwork';
 
@@ -139,6 +140,8 @@ export interface ActiveEvent {
     region?: Region | 'Global';
 }
 
+export type TaxJurisdiction = 'USA_WA' | 'USA_CA' | 'USA_TX' | 'DE' | 'JP' | 'GLOBAL';
+
 export interface Investor {
   id: string;
   name: string;
@@ -150,7 +153,9 @@ export interface Investor {
   portfolioHistory: PortfolioValueHistoryPoint[];
   taxLossCarryforward: number;
   totalTaxesPaid: number;
-  waAnnualNetLTCG: number;
+  annualNetLTCG: number;
+  annualNetSTCG: number;
+  jurisdiction: TaxJurisdiction;
   recentTrades: RecentTrade[];
 }
 

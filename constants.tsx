@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { InvestorStrategy, ComplexInvestorStrategy, HyperComplexInvestorStrategy, Region, Investor, RandomInvestorStrategy } from './types';
+import { InvestorStrategy, ComplexInvestorStrategy, HyperComplexInvestorStrategy, Region, Investor, RandomInvestorStrategy, TaxJurisdiction } from './types';
 import { NeuralNetwork } from './services/neuralNetwork';
 
 export interface StockConfig {
@@ -41,6 +41,7 @@ type InvestorConfig = {
   strategyName?: string;
   strategy: InvestorStrategy | ComplexInvestorStrategy | HyperComplexInvestorStrategy | RandomInvestorStrategy;
   initialCash: number;
+  jurisdiction: TaxJurisdiction;
 };
 
 // Shuffle array in place
@@ -179,18 +180,58 @@ export const AI_INITIAL_INVESTOR_CASH = 100;
 export const INFLATION_RATE = 0.02 / 365; // Daily inflation rate
 
 export const TAX_CONSTANTS = {
-  WASHINGTON_LTCG_RATE: 0.07,
-  WASHINGTON_CG_EXEMPTION: 250000,
   LONG_TERM_HOLDING_PERIOD: 365, // days
 };
 
-export const WASHINGTON_B_AND_O_TAX_RATES_BY_SECTOR: Record<string, number> = {
-  Technology: 0.00471,
-  Health: 0.00484,
-  Finance: 0.00484,
-  Industrials: 0.00484,
-  Energy: 0.00484,
-  default: 0.00484,
+export interface TaxRegime {
+    ltcgRate: number;
+    ltcgExemption?: number;
+    stcgRate: number;
+    stcgExemption?: number;
+    description: string;
+}
+
+export const TAX_REGIMES: Record<TaxJurisdiction, TaxRegime> = {
+    USA_WA: {
+        ltcgRate: 0.07, // State LTCG
+        ltcgExemption: 250000,
+        stcgRate: 0, // No state STCG tax
+        description: 'USA (Federal) + Washington (State). 7% LTCG tax on gains over $250k.'
+    },
+    USA_CA: {
+        ltcgRate: 0.093, // State income tax applies
+        stcgRate: 0.093, // State income tax applies
+        description: 'USA (Federal) + California (State). 9.3% income tax on all capital gains.'
+    },
+    USA_TX: {
+        ltcgRate: 0,
+        stcgRate: 0,
+        description: 'USA (Federal) + Texas (State). No state income tax on capital gains.'
+    },
+    DE: {
+        ltcgRate: 0.264, // Abgeltungsteuer + Soli
+        stcgRate: 0.264,
+        ltcgExemption: 1000,
+        description: 'Germany. Flat 26.4% tax on all capital gains, with a small exemption.'
+    },
+    JP: {
+        ltcgRate: 0.203,
+        stcgRate: 0.203,
+        description: 'Japan. Flat 20.3% tax on all capital gains.'
+    },
+    GLOBAL: {
+        ltcgRate: 0.15,
+        stcgRate: 0.25,
+        description: 'Global Average. Simplified progressive-like tax model.'
+    }
+};
+
+
+export const CORPORATE_TAX_RATES_BY_REGION: Record<Region, number> = {
+  'North America': 0.00471,
+  'Europe': 0.0055,
+  'Asia': 0.0052,
+  'Global': 0.0050,
 };
 
 export const MIN_CORPORATE_ACTION_INTERVAL = 20;
@@ -323,6 +364,7 @@ export const buildInvestors = (options: { realisticDemographics?: boolean } = {}
     const aiInvestors: InvestorConfig[] = [];
     const inputLayerSize = INDICATOR_NEURONS.length;
     const totalInvestors = 999;
+    const JURISDICTIONS: TaxJurisdiction[] = ['USA_WA', 'USA_CA', 'USA_TX', 'DE', 'JP', 'GLOBAL'];
 
     if (!realisticDemographics) {
         // --- Original Simulation Mode ---
@@ -332,6 +374,7 @@ export const buildInvestors = (options: { realisticDemographics?: boolean } = {}
                 name: `AI Trader #${i + 1}`,
                 strategyName: STRATEGY_NAMES[i % STRATEGY_NAMES.length],
                 initialCash: AI_INITIAL_INVESTOR_CASH,
+                jurisdiction: JURISDICTIONS[i % JURISDICTIONS.length],
                 strategy: {
                     strategyType: 'hyperComplex',
                     network: createNeuralNetwork([inputLayerSize, 10, 5, 1], INDICATOR_NEURONS),
@@ -378,6 +421,7 @@ export const buildInvestors = (options: { realisticDemographics?: boolean } = {}
                 name: `Retail Investor #${i + 1}`,
                 strategyName: "Standard Model",
                 initialCash: 10000 + Math.random() * 90000, // $10k - $100k
+                jurisdiction: JURISDICTIONS[i % JURISDICTIONS.length],
                 strategy: {
                     strategyType: 'hyperComplex',
                     network: createNeuralNetwork([inputLayerSize, 10, 5, 1], INDICATOR_NEURONS),
@@ -454,6 +498,7 @@ export const buildInvestors = (options: { realisticDemographics?: boolean } = {}
         name: 'Human Player',
         isHuman: true,
         initialCash: HUMAN_INITIAL_INVESTOR_CASH,
+        jurisdiction: 'USA_WA',
         strategy: {
             strategyType: 'random',
             tradeChance: 0

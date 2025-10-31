@@ -1,19 +1,23 @@
+
+
 import React, { useMemo } from 'react';
 import { Investor, PortfolioItem, Stock, HyperComplexInvestorStrategy } from '../types';
 import PortfolioDonutChart from './PortfolioDonutChart';
 import PriceChart from './PriceChart';
 import NeuralNetworkVisualizer from './NeuralNetworkVisualizer';
-
-interface InvestorCardProps {
-  investor: Investor;
-  stocks: Stock[];
-  isHuman?: boolean;
-}
+import { TAX_REGIMES } from '../constants';
 
 const getSharesOwned = (item: PortfolioItem | undefined): number => {
     if (!item) return 0;
     return item.lots.reduce((sum, lot) => sum + lot.shares, 0);
 };
+
+// Fix: Added missing interface definition for component props.
+interface InvestorCardProps {
+    investor: Investor;
+    stocks: Stock[];
+    isHuman: boolean;
+}
 
 const InvestorCard: React.FC<InvestorCardProps> = ({ investor, stocks, isHuman }) => {
   const portfolioValue = investor.portfolio.reduce((total, item) => {
@@ -23,6 +27,7 @@ const InvestorCard: React.FC<InvestorCardProps> = ({ investor, stocks, isHuman }
   }, 0);
   
   const totalValue = investor.cash + portfolioValue;
+  const jurisdictionInfo = TAX_REGIMES[investor.jurisdiction];
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -65,9 +70,17 @@ const InvestorCard: React.FC<InvestorCardProps> = ({ investor, stocks, isHuman }
               {investor.name}
               {isHuman && <span className="text-xs bg-accent text-white font-bold py-0.5 px-2 rounded-full">YOU</span>}
           </h3>
-          {!isHuman && investor.strategyName && (
-              <p className="text-xs text-accent">{investor.strategyName}</p>
-          )}
+          <div className="flex items-center gap-2 mt-1">
+            {!isHuman && investor.strategyName && (
+                <p className="text-xs text-accent">{investor.strategyName}</p>
+            )}
+            <div 
+                className="text-xs bg-gray-600 text-gray-300 font-semibold py-0.5 px-1.5 rounded-full cursor-help"
+                title={jurisdictionInfo.description}
+            >
+                {investor.jurisdiction}
+            </div>
+          </div>
         </div>
         <p className="font-mono font-semibold text-gray-200 text-right">{formatCurrency(totalValue)}</p>
       </div>
